@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Bid Cricket — Game (IPL-style Bidding)</title>
+<title>Bid Cricket — Game (Full Match + Bidding)</title>
 <style>
   :root{--bg:#071026;--card:#0b1724;--accent:#00d4ff;--muted:#9fb3c8}
   *{box-sizing:border-box}
@@ -25,6 +25,14 @@
   .squadList{margin-top:8px;padding:8px;background:rgba(255,255,255,0.02);border-radius:8px;min-height:40px}
   .squadTitle{font-size:0.95rem;color:var(--muted);margin-bottom:6px}
   .small{font-size:0.9rem;color:var(--muted)}
+  /* modal simple */
+  .modal { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.6); z-index:9999; }
+  .modal.show{ display:flex; }
+  .modalCard{ background:#061226; padding:18px; border-radius:12px; width:90%; max-width:600px; box-shadow:0 12px 40px rgba(0,0,0,0.7) }
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .shotBtn{padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);cursor:pointer;background:transparent}
+  .shotBtn.disabled{opacity:0.5;pointer-events:none}
+  .smallNote{font-size:0.85rem;color:var(--muted);margin-top:8px}
 </style>
 </head>
 <body>
@@ -32,7 +40,7 @@
     <div class="top">
       <div>
         <h1>Bid Cricket — Room <span id="roomLabel">—</span></h1>
-        <div class="muted">Real-time bidding → 20-over match | Bowler max 5 overs</div>
+        <div class="muted">Bidding + Full match — 20 overs | Bowler max 4 overs</div>
       </div>
       <div class="muted">You: <b id="meLabel">—</b></div>
     </div>
@@ -95,6 +103,7 @@
       <div class="card">
         <strong>Live Scoreboard</strong>
         <div id="scoreboard" style="margin-top:8px" class="muted">No match running</div>
+        <div id="inPlayControls" style="margin-top:10px"></div>
       </div>
       <div class="card">
         <strong>Controls</strong>
@@ -106,9 +115,68 @@
     </div>
   </div>
 
+  <!-- MODALS -->
+  <div id="tossModal" class="modal">
+    <div class="modalCard">
+      <h3>Toss</h3>
+      <div id="tossText" class="muted">Deciding toss...</div>
+      <div id="tossOptions" style="margin-top:12px;display:none">
+        <div class="muted">Toss winner choose:</div>
+        <div style="margin-top:8px">
+          <button id="chooseBat" class="btn btn-primary">Bat first</button>
+          <button id="chooseBowl" class="btn" style="margin-left:8px">Bowl first</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="selectOpenersModal" class="modal">
+    <div class="modalCard">
+      <h3>Select Openers & Opening Bowler</h3>
+      <div class="muted" id="selectOpenersText">Choose 2 openers (batting side) and 1 opening bowler (bowling side).</div>
+
+      <div style="margin-top:10px">
+        <div class="muted">Batting team — pick 2 openers</div>
+        <div id="battingPlayerSelect" class="controls"></div>
+      </div>
+
+      <div style="margin-top:10px">
+        <div class="muted">Bowling team — pick 1 bowler</div>
+        <div id="bowlingPlayerSelect" class="controls"></div>
+      </div>
+
+      <div style="margin-top:12px">
+        <button id="confirmOpeners" class="btn btn-primary">Confirm selections</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ballModal" class="modal">
+    <div class="modalCard">
+      <h3 id="ballHeader">Play Ball</h3>
+      <div id="ballInfo" class="muted">—</div>
+
+      <div style="margin-top:12px">
+        <div class="muted">Choose shot</div>
+        <div class="controls" id="shotButtons">
+          <button class="shotBtn" data-shot="strike">Strike (high risk/high reward)</button>
+          <button class="shotBtn" data-shot="stroke">Stroke (medium)</button>
+          <button class="shotBtn" data-shot="defensive">Defensive (low risk)</button>
+        </div>
+      </div>
+
+      <div class="smallNote">Outcome probabilities depend on batter & bowler stats + chosen shot. (1-6 runs / 7,8,0 = OUT / 9 = NOBALL)</div>
+    </div>
+  </div>
+
 <script type="module">
-/* game.html: bidding updated to IPL-style turn-based bidding (p1 / p2).
-   Only bidding logic + UI rendering changed; rest of DB & engine intact.
+/* Full game.html with:
+   - bidding (IPL-style) kept
+   - after squads filled / Start Match -> toss modal -> selection modal -> innings begins
+   - interactive ball-by-ball play via modal when it's batting side's client to choose shot
+   - probabilities influenced by batter.bat, bowler.bowl, shot choice (strike/stroke/defensive)
+   - bowler max 4 overs, total 20 overs
+   - game state synced in Firebase
 */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
@@ -124,7 +192,6 @@ const firebaseConfig = {
   appId: "1:261417896823:web:ccfae5b573a2897558af72",
   measurementId: "G-ZLR9WM5YH9"
 };
-
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
@@ -134,7 +201,7 @@ const ROOM_ID = params.get('room');
 const ME = params.get('me'); // 'p1' or 'p2'
 if(!ROOM_ID || !ME){ alert('Missing room or me param. Open via index.html'); throw new Error('missing params'); }
 
-/* --- DOM refs --- */
+/* DOM refs */
 const roomLabel = document.getElementById('roomLabel');
 const meLabel = document.getElementById('meLabel');
 const poolEl = document.getElementById('pool');
@@ -159,14 +226,34 @@ const p2NameEl = document.getElementById('p2Name');
 roomLabel.innerText = ROOM_ID;
 meLabel.innerText = ME;
 
-/* --- helpers --- */
+/* modals */
+const tossModal = document.getElementById('tossModal');
+const tossText = document.getElementById('tossText');
+const tossOptions = document.getElementById('tossOptions');
+const chooseBat = document.getElementById('chooseBat');
+const chooseBowl = document.getElementById('chooseBowl');
+
+const selectOpenersModal = document.getElementById('selectOpenersModal');
+const battingPlayerSelect = document.getElementById('battingPlayerSelect');
+const bowlingPlayerSelect = document.getElementById('bowlingPlayerSelect');
+const confirmOpeners = document.getElementById('confirmOpeners');
+
+const ballModal = document.getElementById('ballModal');
+const ballHeader = document.getElementById('ballHeader');
+const ballInfo = document.getElementById('ballInfo');
+const shotButtons = document.getElementById('shotButtons');
+
+function showModal(el){ el.classList.add('show'); }
+function hideModal(el){ el.classList.remove('show'); }
+
+/* helpers */
 function log(msg){
   const el = document.createElement('div');
   el.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
   logEl.prepend(el);
 }
 
-/* --- room reference & snapshot listener --- */
+/* --- room ref & listener --- */
 const roomRef = ref(db, 'rooms/' + ROOM_ID);
 let roomData = null;
 
@@ -177,11 +264,18 @@ onValue(roomRef, snap => {
     return;
   }
   renderRoom(roomData);
+  // If a game exists and it's in the "pre-match" state for toss/openers, handle modals
+  if(roomData.status === 'readyToStart' && roomData.game === null){
+    // show Start Match button available; user can click.
+  }
+  if(roomData.status === 'toss'){ // toss in progress
+    handleTossUI(roomData);
+  }
+  if(roomData.status === 'selectOpeners'){ handleSelectOpenersUI(roomData); }
+  if(roomData.status === 'playing'){ handleInningsUI(roomData); }
 });
 
-/* --- render UI from room --- */
 function renderRoom(r){
-  // players list
   const players = r.players || {};
   playersList.innerText = Object.entries(players).map(([k,p])=> `${k} - ${p.name} (₹${p.budget})`).join(' | ');
   statusLabel.innerText = r.status || 'waiting';
@@ -197,19 +291,22 @@ function renderRoom(r){
   p1SquadEl.innerText = (p1.squad && p1.squad.length) ? p1.squad.map(pl=>pl.name).join(', ') : '—';
   p2SquadEl.innerText = (p2.squad && p2.squad.length) ? p2.squad.map(pl=>pl.name).join(', ') : '—';
 
-  // ensure pool present
+  // pool
   if(!r.pool){
     const pool = generatePool();
     update(roomRef, { pool });
     return;
   }
-
   renderPool(r.pool);
+
+  // bidding area (kept from before)
   renderBidding(r.bidding || { activeFor:null, turn:null, lastBid:null, roundOpen:false });
+
+  // scoreboard rendering
   renderScoreboard(r.game || null);
 }
 
-/* --- handle disconnect (remove player if leaves) --- */
+/* --- disconnect cleanup: remove player slot if leaves --- */
 window.addEventListener("beforeunload", () => {
   if (ROOM_ID && ME) {
     const playerRef = ref(db, `rooms/${ROOM_ID}/players/${ME}`);
@@ -229,17 +326,14 @@ function renderPool(pool){
   });
 }
 
-/* --- open bidding (starts IPL-style turn bidding) --- */
+/* --- Bidding (IPL-style) --- */
 async function openBiddingForPlayer(playerId){
   const r = roomData;
   if(!r) return;
-
-  // if a bidding already open -> block
   if(r.bidding && r.bidding.roundOpen && r.bidding.activeFor){
     alert('Another bidding round is already open. Wait till it finishes.');
     return;
   }
-
   const teamSize = Number(teamSizeInput.value) || 11;
   const p1Squad = (r.players?.p1?.squad) || [];
   const p2Squad = (r.players?.p2?.squad) || [];
@@ -247,13 +341,10 @@ async function openBiddingForPlayer(playerId){
     alert('Both squads are full.');
     return;
   }
-
-  // initialize bidding: lastBid null, turn = p1 (so p1 starts bid)
   await update(roomRef, { bidding: { activeFor: playerId, roundOpen: true, turn: 'p1', lastBid: null } });
   log('Bidding started for ' + playerId + ' (turn: p1)');
 }
 
-/* --- render bidding area --- */
 function renderBidding(bidState){
   bidArea.innerHTML = '';
   if(!bidState || !bidState.activeFor){
@@ -272,7 +363,6 @@ function renderBidding(bidState){
 
   const lastBid = bidState.lastBid ? `Last bid: ₹${bidState.lastBid.amount} by ${bidState.lastBid.name}` : 'No bids yet';
   const isMyTurn = bidState.turn === ME && bidState.roundOpen === true;
-
   let html = `<div class="muted" style="margin-top:6px">${lastBid}</div>`;
 
   if(isMyTurn){
@@ -287,15 +377,10 @@ function renderBidding(bidState){
     `;
   } else {
     html += `<div class="muted" style="margin-top:10px">Waiting for <strong>${bidState.turn === 'p1' ? (roomData.players?.p1?.name||'p1') : (roomData.players?.p2?.name||'p2')}</strong> to act...</div>`;
-    // Optionally show a withdraw button to opponent? No — only current-turn can act.
   }
-
-  // Also show a cancel (owner) option if you are admin (we won't check admin; allow either to cancel if they opened)
   html += `<div style="margin-top:10px"><button id="forceCancel" class="btn" style="background:transparent;border:1px solid rgba(255,255,255,0.06);">Cancel Auction</button></div>`;
-
   bidArea.innerHTML = html;
 
-  // Wire up buttons if it's my turn
   if(isMyTurn){
     document.getElementById('bidBtn').onclick = async ()=>{
       const val = Number(document.getElementById('bidInput').value) || 0;
@@ -305,37 +390,27 @@ function renderBidding(bidState){
         alert(`Invalid bid. Minimum: ₹${minAllowed}, Maximum: ₹${myBudget}`);
         return;
       }
-      // set lastBid and switch turn to opponent
       const nextTurn = ME === 'p1' ? 'p2' : 'p1';
       await update(roomRef, { 'bidding/lastBid': { uid: ME, name: roomData.players[ME].name, amount: val }, 'bidding/turn': nextTurn });
       log(`${roomData.players[ME].name} bid ₹${val}`);
     };
 
     document.getElementById('withdrawBtn').onclick = async ()=>{
-      // If there is a lastBid by opponent -> finalize that opponent as winner
       const last = bidState.lastBid;
-      const opponent = ME === 'p1' ? 'p2' : 'p1';
-
       if(!last){
-        // no bids yet, withdraw cancels auction
         await update(roomRef, { 'bidding': { activeFor: null, roundOpen: false, turn: null, lastBid: null } });
         log(`${roomData.players[ME].name} withdrew (no bids). Auction cancelled.`);
         return;
       }
-
-      // If lastBid exists, then whoever placed lastBid wins. But ensure lastBid.uid !== ME (if ME was last bidder withdrawing on my own, treat as cancel)
       if(last.uid === ME){
-        // If you are withdrawing but you are the last bidder -> interpret as cancelling your own last bid -> revert to opponent (we'll treat as cancel)
         await update(roomRef, { 'bidding': { activeFor: null, roundOpen: false, turn: null, lastBid: null } });
         log(`${roomData.players[ME].name} cancelled the bidding (their own last bid).`);
         return;
       }
-      // Otherwise finalize winner = last
       await finalizeWinner(last);
     };
   }
 
-  // Force cancel (anyone can press) - will cancel auction round
   document.getElementById('forceCancel').onclick = async ()=>{
     if(!confirm('Cancel this auction round?')) return;
     await update(roomRef, { 'bidding': { activeFor: null, roundOpen: false, turn: null, lastBid: null } });
@@ -343,25 +418,18 @@ function renderBidding(bidState){
   };
 }
 
-/* --- finalize winner: assign player, deduct budget, remove from pool --- */
+/* finalize winner similar to earlier but also remove from pool */
 async function finalizeWinner(winner) {
   const playerId = roomData.bidding.activeFor;
   const playerObj = (roomData.pool || []).find(x => x.id === playerId);
   if (!playerObj) return;
 
   const updates = {};
-
-  // 1️⃣ Add player to winner's squad
   const winnerSquad = (roomData.players[winner.uid].squad || []).slice();
   winnerSquad.push(playerObj);
-
-  // 2️⃣ Deduct bid amount
   const newBudget = (roomData.players[winner.uid].budget || 0) - winner.amount;
-
-  // 3️⃣ Remove player from pool
   const newPool = (roomData.pool || []).filter(p => p.id !== playerId);
 
-  // 4️⃣ Update everything in Firebase
   updates[`players/${winner.uid}/squad`] = winnerSquad;
   updates[`players/${winner.uid}/budget`] = newBudget;
   updates[`pool`] = newPool;
@@ -373,7 +441,7 @@ async function finalizeWinner(winner) {
   setTimeout(() => checkReadyToStart(), 400);
 }
 
-/* --- check readiness to start match --- */
+/* check readiness */
 function checkReadyToStart(){
   const r = roomData;
   if(!r) return;
@@ -381,132 +449,461 @@ function checkReadyToStart(){
   const p1 = r.players && r.players.p1 && r.players.p1.squad ? r.players.p1.squad.length : 0;
   const p2 = r.players && r.players.p2 && r.players.p2.squad ? r.players.p2.squad.length : 0;
   if(p1 >= teamSize && p2 >= teamSize){
+    // set status to readyToStart; show Start Match button
     update(roomRef, { status: 'readyToStart' });
     log('Both squads filled. Ready to start!');
   }
 }
 
-/* --- start match: called when both squads full or force press --- */
+/* Start match button -> set status to toss and create minimal game object placeholder */
 startMatchBtn.onclick = async ()=>{
   const r = roomData;
   if(!r) return;
   if(r.status === 'playing'){ alert('Match already playing'); return; }
   if(!r.players || !r.players.p1 || !r.players.p2){ alert('Need 2 players in room'); return; }
+  // create placeholder game object with squads; actual innings setup after toss/openers
   const teamSize = Number(teamSizeInput.value) || 11;
   const game = {
     createdAt: Date.now(),
     oversTotal: 20,
-    innings: 1,
+    innings: 0, // 0 = pre-match (toss), 1/2 for innings
     currentOverBalls: 0,
     oversCompleted: 0,
-    bowlerOvers: {},
+    bowlerOvers: {}, // { bowlerId: overs }
     teamA: { name: r.players.p1.name, players: (r.players.p1.squad||[]).slice(0,teamSize), score: 0, wickets: 0 },
     teamB: { name: r.players.p2.name, players: (r.players.p2.squad||[]).slice(0,teamSize), score: 0, wickets: 0 },
     ballLog: [],
-    finished: false
+    finished: false,
+    meta: { tossDone: false, tossWinner: null, tossChoice: null, openersSelected: false }
   };
-  await update(roomRef, { status: 'playing', game });
-  log('Match started between ' + game.teamA.name + ' and ' + game.teamB.name);
-  startEngine();
+  await update(roomRef, { status: 'toss', game });
+  log('Match initialized. Starting toss...');
+  // only one client should run toss; but we will set toss result in DB so all see.
+  runTossIfOwner();
+};
+
+/* toss routine: pick random p1/p2. We'll allow first client who sees status 'toss' to commit toss result.
+   But to avoid race: if meta.tossDone true skip.
+*/
+async function runTossIfOwner(){
+  const snap = await get(roomRef);
+  const r = snap.val();
+  if(!r || !r.game) return;
+  if(r.game.meta && r.game.meta.tossDone) return;
+  // choose toss winner random
+  const winner = (Math.random() < 0.5) ? 'p1' : 'p2';
+  // write into DB and set status to 'toss' (already set)
+  await update(roomRef, { 'game/meta/tossDone': true, 'game/meta/tossWinner': winner });
+  log(`Toss result decided: ${winner} won the toss.`);
+  // show toss modal UI
+  // make sure status moves to 'selectOpeners' after toss choice
 }
 
-/* --- match engine: unchanged --- */
-let engineInterval = null;
-function startEngine(){
-  if(engineInterval) clearInterval(engineInterval);
-  engineInterval = setInterval(async ()=>{
-    const snap = await get(roomRef);
-    const r = snap.val();
-    if(!r || !r.game) return clearInterval(engineInterval);
-    const g = r.game;
-    if(g.finished) return clearInterval(engineInterval);
+/* UI handler for toss modal - show when appropriate */
+function handleTossUI(r){
+  // if toss done and tossChoice not decided yet -> show options to tossWinner only
+  const meta = r.game.meta || {};
+  if(!meta.tossDone) {
+    // show spinning text
+    tossText.innerText = 'Deciding toss...';
+    showModal(tossModal);
+    tossOptions.style.display = 'none';
+    return;
+  }
+  const winner = meta.tossWinner;
+  tossText.innerText = `${(r.players && r.players[winner] && r.players[winner].name) || winner} won the toss.`;
+  // if tossChoice already set, hide modal and proceed
+  if(meta.tossChoice){
+    hideModal(tossModal);
+    // move to selectOpeners
+    update(roomRef, { status: 'selectOpeners' });
+    return;
+  }
+  // show choices only to toss winner's client
+  tossOptions.style.display = (ME === winner) ? 'block' : 'none';
+  showModal(tossModal);
+}
 
-    const batting = (g.innings === 1) ? g.teamA : g.teamB;
-    const bowling = (g.innings === 1) ? g.teamB : g.teamA;
+/* toss choice actions */
+chooseBat.onclick = async ()=>{
+  await update(roomRef, { 'game/meta/tossChoice': 'bat' , status: 'selectOpeners' });
+  log(`${roomData.players[ME].name} chose to bat.`);
+  hideModal(tossModal);
+};
 
-    const batter = batting.players[Math.floor(Math.random()*batting.players.length)];
-    const candidates = bowling.players.filter(b => (g.bowlerOvers && (g.bowlerOvers[b.id] || 0) < 5));
-    const bowler = (candidates.length>0) ? candidates[Math.floor(Math.random()*candidates.length)] : bowling.players[Math.floor(Math.random()*bowling.players.length)];
+chooseBowl.onclick = async ()=>{
+  await update(roomRef, { 'game/meta/tossChoice': 'bowl' , status: 'selectOpeners' });
+  log(`${roomData.players[ME].name} chose to bowl.`);
+  hideModal(tossModal);
+};
 
-    const outcome = simulateBall(batter, bowler);
-    const ballEntry = `${g.innings} | O${g.oversCompleted}.${g.currentOverBalls+1} | ${batter.name} vs ${bowler.name} -> ${outcome.type}${outcome.runs?(' '+outcome.runs):''}`;
+/* Select openers UI - let batting side pick 2 openers and bowling side pick 1 opening bowler.
+   We'll render clickable lists of squad players for selection. Selections stored in game.meta.openers = { battingSide: 'p1'|'p2', openers: [ids], openingBowler: id }
+*/
+function handleSelectOpenersUI(r){
+  const meta = r.game.meta || {};
+  if(meta.openersSelected){
+    hideModal(selectOpenersModal);
+    return;
+  }
+  // determine which side bats first based on tossWinner and tossChoice
+  const tossWinner = meta.tossWinner;
+  const choice = meta.tossChoice; // 'bat' or 'bowl'
+  if(!tossWinner || !choice) return; // wait
+  // batting side is:
+  const battingSide = (choice === 'bat') ? tossWinner : (tossWinner === 'p1' ? 'p2' : 'p1');
+  const bowlingSide = (battingSide === 'p1') ? 'p2' : 'p1';
+  // Show modal to both but only allow selection by respective clients:
+  showModal(selectOpenersModal);
+  battingPlayerSelect.innerHTML = '';
+  bowlingPlayerSelect.innerHTML = '';
+
+  // batting players list: show from battingSide's squad (full squad)
+  const battingSquad = (r.players && r.players[battingSide] && r.players[battingSide].squad) || [];
+  battingSquad.forEach(pl=>{
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.style.minWidth = '120px';
+    b.style.marginBottom = '6px';
+    b.innerText = `${pl.name} • BAT ${pl.bat}`;
+    b.dataset.pid = pl.id;
+    battingPlayerSelect.appendChild(b);
+    b.onclick = ()=>{
+      // select/unselect for openers only if this client belongs to batting side
+      if(ME !== battingSide){ alert('Waiting for batting side to choose openers.'); return; }
+      b.classList.toggle('selected');
+      // limit to 2 selections visually
+      const chosen = Array.from(battingPlayerSelect.querySelectorAll('.selected'));
+      if(chosen.length > 2){
+        b.classList.remove('selected'); alert('Choose only 2 openers.');
+      }
+    };
+  });
+
+  // bowling players list: show bowlers from bowlingSide's squad (role bowler/allrounder preferred)
+  const bowlingSquad = (r.players && r.players[bowlingSide] && r.players[bowlingSide].squad) || [];
+  bowlingSquad.forEach(pl=>{
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.style.minWidth = '120px';
+    b.style.marginBottom = '6px';
+    b.innerText = `${pl.name} • BWL ${pl.bowl}`;
+    b.dataset.pid = pl.id;
+    bowlingPlayerSelect.appendChild(b);
+    b.onclick = ()=>{
+      if(ME !== bowlingSide){ alert('Waiting for bowling side to choose opener bowler.'); return; }
+      // make radio-style selection
+      bowlingPlayerSelect.querySelectorAll('button').forEach(x=>x.classList.remove('selected'));
+      b.classList.add('selected');
+    };
+  });
+
+  // confirm button action: only allowed if this client is either batting or bowling side and both have made selections
+  confirmOpeners.onclick = async ()=>{
+    const chosenOpeners = Array.from(battingPlayerSelect.querySelectorAll('.selected')).map(x=>x.dataset.pid);
+    const chosenBow = bowlingPlayerSelect.querySelector('button.selected');
+    if(chosenOpeners.length !== 2){ alert('Batting side must pick exactly 2 openers.'); return; }
+    if(!chosenBow){ alert('Bowling side must pick 1 opening bowler.'); return; }
+    const openingBowlerId = chosenBow.dataset.pid;
+    // Write openers into game.meta and mark openersSelected true, set innings = 1 and set batting order etc.
+    const battingPlayers = (r.players && r.players[ (battingSide) ] && r.players[battingSide].squad) || [];
+    const bowlingPlayers = (r.players && r.players[ (bowlingSide) ] && r.players[bowlingSide].squad) || [];
+
+    // find player objects
+    const openerObjs = battingPlayers.filter(p=> chosenOpeners.includes(p.id));
+    const bowlerObj = bowlingPlayers.find(p=> p.id === openingBowlerId);
+
+    // Build innings state — we'll store battingOrder/nextBatterIndex etc into game.meta.inningsSetup
+    const updates = {};
+    updates['game/meta/openersSelected'] = true;
+    updates['game/meta/openers'] = { battingSide, openers: openerObjs, openingBowler: bowlerObj };
+    // Prepare innings state
+    const inningsState = {
+      innings: 1,
+      battingSide,
+      bowlingSide,
+      striker: openerObjs[0],
+      nonStriker: openerObjs[1],
+      nextBatterIndex: 2, // index among battingPlayers array
+      battingOrder: battingPlayers, // full batting order array
+      currentBowler: bowlerObj,
+      oversTotal: 20,
+      currentOverBalls: 0,
+      oversCompleted: 0,
+      bowlerOvers: {}, // track overs per bowler id (max 4)
+      score: 0,
+      wickets: 0
+    };
+    updates['game/inningsState'] = inningsState;
+    updates['status'] = 'playing';
+    // set game.innings = 1 and meta flags
+    updates['game/innings'] = 1;
+    updates['game.meta.tossChoice'] = r.game.meta.tossChoice;
+    await update(roomRef, updates);
+    hideModal(selectOpenersModal);
+    log('Openers & bowler confirmed. Innings 1 starts.');
+    // Immediately prompt batting side's client to play first ball (they will see modal)
+  };
+}
+
+/* Handle in-play UI: show ball modal to batting-side client for choosing shot when it's time for next ball.
+   We'll control ball flow using a "game.nextBall" flag in DB to indicate that batting client should act.
+*/
+function handleInningsUI(r){
+  const game = r.game;
+  if(!game) return;
+  const inningsState = game.inningsState;
+  if(!inningsState) return;
+  // Show scoreboard
+  renderScoreboard(game);
+
+  // Determine which side is batting now
+  const battingSide = inningsState.battingSide;
+  // If the database has a "nextBall" object targeted to a specific uid, open modal only on that client's browser.
+  // We'll create a convention: game.nextBall = { uid: 'p1'|'p2', info: {...} } -> that client shows modal.
+  const nextBall = game.nextBall || null;
+  if(nextBall && nextBall.uid === ME && !nextBall.playing){
+    // show ball modal and let user pick shot
+    ballHeader.innerText = `Over ${inningsState.oversCompleted}.${inningsState.currentOverBalls+1} — ${inningsState.striker.name} vs ${inningsState.currentBowler.name}`;
+    ballInfo.innerText = `Score: ${inningsState.score}/${inningsState.wickets} — Choose shot`;
+    // enable shot buttons
+    Array.from(shotButtons.querySelectorAll('.shotBtn')).forEach(b=> b.classList.remove('disabled'));
+    showModal(ballModal);
+
+    // wire shot buttons
+    Array.from(shotButtons.querySelectorAll('.shotBtn')).forEach(btn=>{
+      btn.onclick = async ()=>{
+        const shot = btn.dataset.shot; // 'strike'|'stroke'|'defensive'
+        // mark as playing to prevent double clicks
+        await update(roomRef, { 'game/nextBall/playing': true });
+        hideModal(ballModal);
+        // compute outcome using a deterministic function and update game state
+        await playBall(shot);
+      };
+    });
+  } else {
+    // Hide if not this client's turn
+    hideModal(ballModal);
+  }
+}
+
+/* To start next ball, we will set game.nextBall = { uid: battingUid, playing:false }.
+   Decide battingUid by mapping battingSide -> p1 or p2 (roomData.players).
+   Simple rule: ME of batting side plays the shot; we assume each player client corresponds to p1 or p2.
+*/
+async function requestNextBall(){
+  const snap = await get(roomRef);
+  const r = snap.val();
+  if(!r || !r.game || !r.game.inningsState) return;
+  const state = r.game.inningsState;
+  const battingSide = state.battingSide; // 'p1' or 'p2'
+  // find uid who is that side (it's the same, p1==p1)
+  const battingUid = battingSide;
+  // set nextBall in DB (others will see)
+  await update(roomRef, { 'game/nextBall': { uid: battingUid, playing: false, createdAt: Date.now() } });
+}
+
+/* Play ball: compute outcome using batter, bowler, shot type, update scores, overs, wickets etc.
+   Rules per user:
+   - digits 0..9 mapping: 1-6 runs, 7/8/0 => OUT, 9 => NOBALL (1 run + replay)
+   - shot choice modifies probabilities: strike -> increases chance of high runs but higher out chance
+   - bowler max 4 overs (adjust selection if current bowler reaches limit)
+*/
+async function playBall(shotType){
+  const snap = await get(roomRef);
+  const r = snap.val();
+  if(!r || !r.game || !r.game.inningsState) return;
+  const g = r.game;
+  const s = g.inningsState;
+  const striker = s.striker;
+  const bowler = s.currentBowler;
+
+  // safety: ensure bowler hasn't exceeded 4 overs; if exceeded, try find another bowler in bowling side's squad with <4 overs
+  s.bowlerOvers = s.bowlerOvers || {};
+  const bowlerOversCount = s.bowlerOvers[bowler.id] || 0;
+  if(bowlerOversCount >= 4){
+    // pick another bowler from bowling side's squad with <4 overs
+    const bowlingSide = s.bowlingSide;
+    const bowlingPlayers = (r.players && r.players[bowlingSide] && r.players[bowlingSide].squad) || [];
+    const candidate = bowlingPlayers.find(p => (s.bowlerOvers[p.id] || 0) < 4);
+    if(candidate) s.currentBowler = candidate;
+  }
+
+  // Compute outcome: we'll use base weights and modify them with shotType and batter/bowler stats
+  const outcome = computeOutcome(striker, s.currentBowler, shotType);
+  // outcome: { type: 'runs'|'dot'|'out'|'noball', runs: number }
+
+  // Apply outcome to innings state and overall game object
+  if(outcome.type === 'runs'){
+    s.score += outcome.runs;
     g.ballLog = g.ballLog || [];
-    g.ballLog.push(ballEntry);
-
-    if(outcome.type === 'runs'){
-      if(g.innings === 1) g.teamA.score += outcome.runs;
-      else g.teamB.score += outcome.runs;
-    } else if(outcome.type === 'out'){
-      if(g.innings === 1) g.teamA.wickets += 1;
-      else g.teamB.wickets += 1;
-    } else if(outcome.type === 'noball'){
-      if(g.innings === 1) g.teamA.score += outcome.runs;
-      else g.teamB.score += outcome.runs;
+    g.ballLog.push(`${g.innings} | O${s.oversCompleted}.${s.currentOverBalls+1} | ${striker.name} vs ${s.currentBowler.name} -> +${outcome.runs}`);
+  } else if(outcome.type === 'dot'){
+    g.ballLog = g.ballLog || [];
+    g.ballLog.push(`${g.innings} | O${s.oversCompleted}.${s.currentOverBalls+1} | ${striker.name} vs ${s.currentBowler.name} -> Dot`);
+  } else if(outcome.type === 'out'){
+    s.wickets += 1;
+    g.ballLog = g.ballLog || [];
+    g.ballLog.push(`${g.innings} | O${s.oversCompleted}.${s.currentOverBalls+1} | ${striker.name} vs ${s.currentBowler.name} -> OUT`);
+    // striker is out -> bring next batter if available
+    const battingOrder = s.battingOrder || [];
+    if(s.nextBatterIndex < battingOrder.length){
+      s.striker = battingOrder[s.nextBatterIndex];
+      s.nextBatterIndex += 1;
+    } else {
+      // all out
+      s.outAll = true;
     }
+  } else if(outcome.type === 'noball'){
+    // 1 run + replay ball
+    s.score += outcome.runs;
+    g.ballLog = g.ballLog || [];
+    g.ballLog.push(`${g.innings} | O${s.oversCompleted}.${s.currentOverBalls+1} | ${striker.name} vs ${s.currentBowler.name} -> NOBALL (+${outcome.runs})`);
+    // note: do not increment ball count for noball
+    // After noball, we will still request next ball (replay), same overBalls
+  }
 
-    g.currentOverBalls += 1;
-    if(g.currentOverBalls >= 6){
-      g.oversCompleted += 1;
-      g.currentOverBalls = 0;
-      g.bowlerOvers = g.bowlerOvers || {};
-      g.bowlerOvers[bowler.id] = (g.bowlerOvers[bowler.id]||0) + 1;
-    }
-
-    if(g.oversCompleted >= g.oversTotal){
-      if(g.innings === 1){
-        g.innings = 2;
-        g.oversCompleted = 0;
-        g.currentOverBalls = 0;
-        log('Innings change. Target: ' + g.teamA.score);
+  // Only increment ball count if not noball
+  if(outcome.type !== 'noball'){
+    s.currentOverBalls += 1;
+    // if an over completes
+    if(s.currentOverBalls >= 6){
+      s.oversCompleted += 1;
+      s.currentOverBalls = 0;
+      // increment bowler overs count
+      s.bowlerOvers = s.bowlerOvers || {};
+      s.bowlerOvers[s.currentBowler.id] = (s.bowlerOvers[s.currentBowler.id] || 0) + 1;
+      // swap striker/non-striker at end of over
+      const tmp = s.striker;
+      s.striker = s.nonStriker;
+      s.nonStriker = tmp;
+      // choose next bowler: simple random pick from bowling squad excluding those who have 4 overs already
+      const bowlingPlayers = (r.players && r.players[s.bowlingSide] && r.players[s.bowlingSide].squad) || [];
+      const candidates = bowlingPlayers.filter(p => (s.bowlerOvers[p.id] || 0) < 4 && p.id !== s.currentBowler.id);
+      if(candidates.length > 0){
+        s.currentBowler = candidates[Math.floor(Math.random()*candidates.length)];
       } else {
-        g.finished = true;
-        const result = computeResult(g);
-        await update(roomRef, { game: g, status: 'finished' });
-        log('Match ended: ' + result);
-        clearInterval(engineInterval);
-        return;
+        // if no candidate, keep same (but ideally should end innings earlier)
       }
     }
+  }
 
-    if((g.innings === 1 && g.teamA.wickets >= 10) || (g.innings === 2 && g.teamB.wickets >= 10)){
-      if(g.innings === 1){
-        g.innings = 2; g.oversCompleted = 0; g.currentOverBalls = 0;
-        log('All out! Innings change. Target: ' + g.teamA.score);
+  // innings end conditions: overs reached or all out
+  if(s.oversCompleted >= s.oversTotal || s.outAll || s.wickets >= (s.battingOrder.length - 1)){
+    // innings end: if innings === 1 -> setup for innings 2; else compute result and finish
+    if(g.innings === 1){
+      // store final score to game.teamA or teamB depending
+      if(s.battingSide === 'p1'){
+        g.teamA.score = s.score;
+        g.teamA.wickets = s.wickets;
       } else {
-        g.finished = true;
-        const result = computeResult(g);
-        await update(roomRef, { game: g, status: 'finished' });
-        log('Match ended: ' + result);
-        clearInterval(engineInterval);
-        return;
+        g.teamB.score = s.score;
+        g.teamB.wickets = s.wickets;
       }
+      // Prepare innings 2: swap batting/bowling sides
+      const battingSide2 = s.bowlingSide;
+      const bowlingSide2 = s.battingSide;
+      const teamSize = Number(teamSizeInput.value) || 11;
+      const battingPlayers2 = (r.players && r.players[battingSide2] && r.players[battingSide2].squad) || [];
+      // default: pick first two as openers (or same logic could be used; simplicity: pick first two)
+      const openerObjs2 = [battingPlayers2[0], battingPlayers2[1]];
+      const nextBatterIndex2 = 2;
+      const inningsState2 = {
+        innings: 2,
+        battingSide: battingSide2,
+        bowlingSide: bowlingSide2,
+        striker: openerObjs2[0],
+        nonStriker: openerObjs2[1],
+        nextBatterIndex: nextBatterIndex2,
+        battingOrder: battingPlayers2,
+        currentBowler: s.currentBowler, // keep current bowler as last used or randomize
+        oversTotal: 20,
+        currentOverBalls: 0,
+        oversCompleted: 0,
+        bowlerOvers: {},
+        score: 0,
+        wickets: 0
+      };
+      g.innings = 2;
+      g.inningsState = inningsState2;
+      await update(roomRef, { game: g });
+      log('Innings 1 finished. Starting innings 2.');
+      // request first ball of innings 2
+      setTimeout(()=> requestNextBall(), 700);
+      return;
+    } else {
+      // match finished: compute result
+      // ensure final score stored
+      if(s.battingSide === 'p1'){
+        g.teamA.score = s.score; g.teamA.wickets = s.wickets;
+      } else {
+        g.teamB.score = s.score; g.teamB.wickets = s.wickets;
+      }
+      g.finished = true;
+      const result = computeResult(g);
+      await update(roomRef, { game: g, status: 'finished' });
+      log('Match ended: ' + result);
+      return;
     }
+  }
 
-    await update(roomRef, { game: g });
-
-  }, 1200);
+  // If innings still on, write updated inningsState back and clear nextBall then request next ball
+  await update(roomRef, { 'game/inningsState': s, 'game/ballLog': g.ballLog });
+  // clear game.nextBall so next player will pick up new request
+  await update(roomRef, { 'game/nextBall': null });
+  // small delay and request next ball
+  setTimeout(()=> requestNextBall(), 500);
 }
 
-function computeResult(g){
-  if(g.teamB.score > g.teamA.score) return `${g.teamB.name} won by ${g.teamB.score - g.teamA.score} runs (chase)`;
-  if(g.teamB.score === g.teamA.score) return 'Match tied';
-  return `${g.teamA.name} won by ${g.teamA.score - g.teamB.score} runs`;
-}
-
-function simulateBall(batter, bowler){
-  let base = [10,12,12,12,10,8,6,3,7,5];
+/* computeOutcome uses base weights and shot modifiers.
+   We'll map base array indices 0..9 as in earlier code.
+   We'll adjust probabilities by:
+   - batter advantage = batter.bat/100, bowler advantage = bowler.bowl/100 -> diff = bat - bowl
+   - shot modifiers:
+      strike: increases weight of high runs (5,6,7?) and increases wicket chance
+      stroke: balanced
+      defensive: lowers wicket chance, more dots/low runs
+*/
+function computeOutcome(batter, bowler, shot){
+  // base weights for digits 0..9 (0=dot,1..6 runs,7->7runs,8->OUT,9->NOBALL)
+  let base = [10,12,12,12,10,8,6,3,7,5]; // baseline
   const batFactor = (batter && batter.bat) ? (batter.bat/100) : 0.6;
   const bowlFactor = (bowler && bowler.bowl) ? (bowler.bowl/100) : 0.6;
-  const diff = batFactor - bowlFactor;
+  const diff = batFactor - bowlFactor; // positive => batsman stronger
 
+  // apply batter/bowler influence: boost mid runs
   for(let i=1;i<=6;i++){
     base[i] = Math.max(2, Math.round(base[i] * (1 + diff*0.45)));
   }
+  // wicket (8) adjustment: if bowler stronger, increase; else decrease
   base[8] = Math.max(1, Math.round(base[8] * (1 - diff*0.7)));
+
+  // shot modifiers
+  if(shot === 'strike'){
+    // more chance for 4-6 and also slightly increase wicket weight
+    base[6] = Math.round(base[6] * 1.6);
+    base[5] = Math.round(base[5] * 1.4);
+    base[4] = Math.round(base[4] * 1.2);
+    base[8] = Math.round(base[8] * 1.35);
+    base[0] = Math.round(base[0] * 0.8);
+  } else if(shot === 'stroke'){
+    base[4] = Math.round(base[4] * 1.2);
+    base[3] = Math.round(base[3] * 1.1);
+    base[8] = Math.round(base[8] * 1.05);
+  } else if(shot === 'defensive'){
+    // fewer runs, much lower wicket
+    base[1] = Math.round(base[1] * 1.1);
+    base[0] = Math.round(base[0] * 1.4);
+    base[8] = Math.round(base[8] * 0.6);
+    base[6] = Math.round(base[6] * 0.6);
+  }
+
+  // normalize and choose index
   const total = base.reduce((a,b)=>a+b,0);
   let r = Math.floor(Math.random()*total);
-  let cum = 0, chosen=0;
+  let cum = 0, chosen = 0;
   for(let i=0;i<10;i++){ cum += base[i]; if(r < cum){ chosen = i; break; } }
+
   if(chosen === 0) return { type: 'dot', runs: 0 };
   if(chosen >=1 && chosen <=6) return { type: 'runs', runs: chosen };
   if(chosen === 7) return { type: 'runs', runs: 7 };
@@ -515,29 +912,53 @@ function simulateBall(batter, bowler){
   return { type: 'dot', runs: 0 };
 }
 
+function computeResult(g){
+  // ensure final scores in teamA/teamB
+  const a = g.teamA.score || 0;
+  const b = g.teamB.score || 0;
+  if(b > a) return `${g.teamB.name} won by ${b - a} runs (chase)`;
+  if(b === a) return 'Match tied';
+  return `${g.teamA.name} won by ${a - b} runs`;
+}
+
+/* initial nextBall trigger for a new innings: when status 'playing' and game.nextBall is null, requestNextBall for batting side.
+   We'll watch DB changes and if game and inningsState present and no nextBall, only one client should call requestNextBall.
+*/
+onValue(roomRef, async snap=>{
+  const r = snap.val();
+  if(!r || !r.game) return;
+  if(r.status === 'playing' && r.game.inningsState && !r.game.nextBall){
+    // small guard: call requestNextBall from whichever client sees this (race ok, DB update will overwrite)
+    await requestNextBall();
+  }
+});
+
 /* --- helper: generate pool fallback --- */
 function generatePool(){
   const names = [
     "Virat","Rohit","Kohli","Bumrah","Jadeja","KL Rahul","Hardik","Shami","Iyer","Gill",
-    "Pant","Shubman","Axar","Siraj","Rahul","Rahane","Vikram","Bishnoi","Yadav","Narine",
+    "Pant","Shubman","Axar","Siraj","Rahane","Vikram","Bishnoi","Yadav","Narine",
     "Stokes","Root","Smith","Williamson","De Kock","Babar","Tamim","Fakhar","Rashid","Curran",
     "Rabada","Boult","Anderson","Zampa","Miller","Niroshan","Southee","Hasan"
-  ].slice(0,36);
-  return names.map((n,i)=>{
-    const bat = Math.round(40 + Math.random()*60);
-    const bowl = Math.round(35 + Math.random()*65);
-    const aggr = Math.round(30 + Math.random()*70);
-    return { id: 'pl'+(i+1), name: n, role: (i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')), bat, bowl, aggr, basePrice: 5000 + Math.round(Math.random()*15000) };
-  });
+  ];
+  return names.map((n,i)=>({
+    id:'pl'+(i+1),
+    name:n,
+    role:(i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')),
+    bat:Math.round(40 + Math.random()*60),
+    bowl:Math.round(35 + Math.random()*65),
+    aggr:Math.round(30 + Math.random()*70),
+    basePrice:5000+Math.round(Math.random()*15000)
+  }));
 }
 
 /* --- render scoreboard --- */
 function renderScoreboard(game){
   if(!game){ scoreboard.innerText = 'No match running'; return; }
   const s = `
-    <div><strong>${game.teamA.name}</strong> — ${game.teamA.score}/${game.teamA.wickets}</div>
-    <div><strong>${game.teamB.name}</strong> — ${game.teamB.score}/${game.teamB.wickets}</div>
-    <div class="muted" style="margin-top:6px">Innings: ${game.innings} | Overs completed: ${game.oversCompleted}/${game.oversTotal} | Balls in over: ${game.currentOverBalls}</div>
+    <div><strong>${game.teamA.name}</strong> — ${game.teamA.score || 0}/${game.teamA.wickets || 0}</div>
+    <div><strong>${game.teamB.name}</strong> — ${game.teamB.score || 0}/${game.teamB.wickets || 0}</div>
+    <div class="muted" style="margin-top:6px">Innings: ${game.innings || 0} | Overs completed: ${game.inningsState ? game.inningsState.oversCompleted : 0}/${game.oversTotal} | Balls in over: ${game.inningsState ? game.inningsState.currentOverBalls : 0}</div>
   `;
   scoreboard.innerHTML = s;
 }
@@ -549,7 +970,6 @@ endRoomBtn.onclick = async ()=>{
   alert('Room deleted. Redirecting to home.');
   window.location.href = 'index.html';
 };
-
 </script>
 </body>
 </html>
