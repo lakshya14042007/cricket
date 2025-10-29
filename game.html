@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Bid Cricket — Game</title>
+<title>Bid Cricket — Game (IPL-style Bidding)</title>
 <style>
   :root{--bg:#071026;--card:#0b1724;--accent:#00d4ff;--muted:#9fb3c8}
   *{box-sizing:border-box}
@@ -22,6 +22,9 @@
   input,select{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
   .log{height:220px;overflow:auto;background:rgba(0,0,0,0.12);padding:8px;border-radius:8px}
   .sectionTitle{display:flex;align-items:center;justify-content:space-between}
+  .squadList{margin-top:8px;padding:8px;background:rgba(255,255,255,0.02);border-radius:8px;min-height:40px}
+  .squadTitle{font-size:0.95rem;color:var(--muted);margin-bottom:6px}
+  .small{font-size:0.9rem;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -48,6 +51,23 @@
           <hr style="opacity:0.06;margin:12px 0">
           <div class="muted">Pool (36 players) — click to open bidding for that player</div>
           <div id="pool" class="pool"></div>
+
+          <div style="margin-top:12px">
+            <div class="squadTitle">Squads</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <div style="flex:1" class="card">
+                <div class="small"><strong id="p1Name">P1</strong> XI</div>
+                <div id="p1Squad" class="squadList">—</div>
+                <div class="small muted" style="margin-top:6px">Budget: <span id="p1Budget">—</span></div>
+              </div>
+              <div style="width:260px" class="card">
+                <div class="small"><strong id="p2Name">P2</strong> XI</div>
+                <div id="p2Squad" class="squadList">—</div>
+                <div class="small muted" style="margin-top:6px">Budget: <span id="p2Budget">—</span></div>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -87,18 +107,8 @@
   </div>
 
 <script type="module">
-/* game.html: full bidding + match engine using Firebase Realtime Database
-   Flow:
-   - reads ?room=...&me=p1|p2 from URL
-   - loads room (pool if present)
-   - displays pool of 36 players (from room.pool)
-   - owner (any player) clicks a player to open bidding: sets bidding.activeFor = playerId
-   - both players submit bids for that player (bids saved at rooms/{id}/bidding/bids/{p1|p2})
-   - when both bids present => resolve: higher wins (tie => random among ties).
-   - winner's budget reduces, winner's squad pushes player object
-   - continue until teams reach teamSize (11 default) => status becomes 'readyToStart' then 'playing'
-   - match engine auto-sim: 20 overs, bowler max 5 overs per bowler; uses mapping: 0 dot, 1-6 runs, 7 run7, 8 OUT, 9 NOBALL
-   - player stats (bat, bowl) affect run/wicket probabilities
+/* game.html: bidding updated to IPL-style turn-based bidding (p1 / p2).
+   Only bidding logic + UI rendering changed; rest of DB & engine intact.
 */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
@@ -115,14 +125,13 @@ const firebaseConfig = {
   measurementId: "G-ZLR9WM5YH9"
 };
 
-
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
 /* --- read URL params --- */
 const params = new URLSearchParams(window.location.search);
 const ROOM_ID = params.get('room');
-const ME = params.get('me'); // 'p1' or 'p2' (set by index page)
+const ME = params.get('me'); // 'p1' or 'p2'
 if(!ROOM_ID || !ME){ alert('Missing room or me param. Open via index.html'); throw new Error('missing params'); }
 
 /* --- DOM refs --- */
@@ -139,6 +148,13 @@ const myBudgetLabel = document.getElementById('myBudget');
 const scoreboard = document.getElementById('scoreboard');
 const teamSizeInput = document.getElementById('teamSize');
 const endRoomBtn = document.getElementById('endRoom');
+
+const p1SquadEl = document.getElementById('p1Squad');
+const p2SquadEl = document.getElementById('p2Squad');
+const p1BudgetEl = document.getElementById('p1Budget');
+const p2BudgetEl = document.getElementById('p2Budget');
+const p1NameEl = document.getElementById('p1Name');
+const p2NameEl = document.getElementById('p2Name');
 
 roomLabel.innerText = ROOM_ID;
 meLabel.innerText = ME;
@@ -171,16 +187,25 @@ function renderRoom(r){
   statusLabel.innerText = r.status || 'waiting';
   myBudgetLabel.innerText = (players && players[ME] && players[ME].budget) ? '₹'+players[ME].budget : '—';
 
+  // squad boxes
+  const p1 = players.p1 || { name: 'p1', budget: 0, squad: [] };
+  const p2 = players.p2 || { name: 'p2', budget: 0, squad: [] };
+  p1NameEl.innerText = p1.name || 'p1';
+  p2NameEl.innerText = p2.name || 'p2';
+  p1BudgetEl.innerText = p1.budget !== undefined ? '₹'+p1.budget : '—';
+  p2BudgetEl.innerText = p2.budget !== undefined ? '₹'+p2.budget : '—';
+  p1SquadEl.innerText = (p1.squad && p1.squad.length) ? p1.squad.map(pl=>pl.name).join(', ') : '—';
+  p2SquadEl.innerText = (p2.squad && p2.squad.length) ? p2.squad.map(pl=>pl.name).join(', ') : '—';
+
   // ensure pool present
   if(!r.pool){
-    // if no pool yet (should have been created), generate locally and push
     const pool = generatePool();
     update(roomRef, { pool });
     return;
   }
 
   renderPool(r.pool);
-  renderBidding(r.bidding || { index:0, activeFor:null, bids:{} });
+  renderBidding(r.bidding || { activeFor:null, turn:null, lastBid:null, roundOpen:false });
   renderScoreboard(r.game || null);
 }
 
@@ -191,7 +216,6 @@ window.addEventListener("beforeunload", () => {
     remove(playerRef);
   }
 });
-
 
 /* --- pool rendering --- */
 function renderPool(pool){
@@ -205,23 +229,28 @@ function renderPool(pool){
   });
 }
 
-/* --- open bidding --- */
+/* --- open bidding (starts IPL-style turn bidding) --- */
 async function openBiddingForPlayer(playerId){
-  // only allow if status is bidding and activeFor not set
   const r = roomData;
   if(!r) return;
+
+  // if a bidding already open -> block
+  if(r.bidding && r.bidding.roundOpen && r.bidding.activeFor){
+    alert('Another bidding round is already open. Wait till it finishes.');
+    return;
+  }
+
   const teamSize = Number(teamSizeInput.value) || 11;
-  // check squads not full
-  const p1Squad = (r.players.p1 && r.players.p1.squad) ? r.players.p1.squad : [];
-  const p2Squad = (r.players.p2 && r.players.p2.squad) ? r.players.p2.squad : [];
+  const p1Squad = (r.players?.p1?.squad) || [];
+  const p2Squad = (r.players?.p2?.squad) || [];
   if(p1Squad.length >= teamSize && p2Squad.length >= teamSize){
     alert('Both squads are full.');
     return;
   }
 
-  // Set bidding.activeFor and clear bids
-  await update(roomRef, { bidding: { index: r.bidding ? r.bidding.index : 0, activeFor: playerId, roundOpen: true, bids: {} } });
-  log('Opened bidding for ' + playerId);
+  // initialize bidding: lastBid null, turn = p1 (so p1 starts bid)
+  await update(roomRef, { bidding: { activeFor: playerId, roundOpen: true, turn: 'p1', lastBid: null } });
+  log('Bidding started for ' + playerId + ' (turn: p1)');
 }
 
 /* --- render bidding area --- */
@@ -231,84 +260,121 @@ function renderBidding(bidState){
     targetCard.innerHTML = '<div class="muted">No active bid</div>';
     return;
   }
+
   const pid = bidState.activeFor;
   const pl = (roomData.pool||[]).find(x=>x.id === pid);
   if(!pl){ targetCard.innerHTML = '<div class="muted">Player not found</div>'; return; }
-  // show target
+
   targetCard.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
     <div><strong>${pl.name}</strong><div class="muted">${pl.role} • BAT ${pl.bat} • BWL ${pl.bowl}</div></div>
     <div class="muted">Base ₹${pl.basePrice}</div>
   </div>`;
-  // show bid form
-  const html = `
-    <div style="margin-top:10px">
-      <label class="muted">Your bid amount (₹)</label>
-      <input id="bidInput" type="number" placeholder="Enter amount" style="width:120px;margin-top:6px" />
-      <button id="placeBidBtn" class="btn btn-primary" style="margin-left:8px">Place Bid</button>
-      <button id="cancelBidBtn" class="btn" style="margin-left:8px">Cancel</button>
-    </div>
-    <div id="liveBids" style="margin-top:8px" class="muted">Live bids: ${Object.values(bidState.bids||{}).map(b=>b.name+':₹'+b.amount).join(' | ')}</div>
-  `;
+
+  const lastBid = bidState.lastBid ? `Last bid: ₹${bidState.lastBid.amount} by ${bidState.lastBid.name}` : 'No bids yet';
+  const isMyTurn = bidState.turn === ME && bidState.roundOpen === true;
+
+  let html = `<div class="muted" style="margin-top:6px">${lastBid}</div>`;
+
+  if(isMyTurn){
+    html += `
+      <div style="margin-top:10px">
+        <label class="muted">Enter your bid (₹)</label>
+        <input id="bidInput" type="number" placeholder="Enter amount" style="width:140px;margin-top:6px" />
+        <button id="bidBtn" class="btn btn-primary" style="margin-left:8px">Bid</button>
+        <button id="withdrawBtn" class="btn" style="margin-left:8px">Withdraw</button>
+      </div>
+      <div class="small muted" style="margin-top:8px">Tip: Bid must be higher than last bid (if exists) and ≤ your budget.</div>
+    `;
+  } else {
+    html += `<div class="muted" style="margin-top:10px">Waiting for <strong>${bidState.turn === 'p1' ? (roomData.players?.p1?.name||'p1') : (roomData.players?.p2?.name||'p2')}</strong> to act...</div>`;
+    // Optionally show a withdraw button to opponent? No — only current-turn can act.
+  }
+
+  // Also show a cancel (owner) option if you are admin (we won't check admin; allow either to cancel if they opened)
+  html += `<div style="margin-top:10px"><button id="forceCancel" class="btn" style="background:transparent;border:1px solid rgba(255,255,255,0.06);">Cancel Auction</button></div>`;
+
   bidArea.innerHTML = html;
 
-  document.getElementById('placeBidBtn').onclick = async ()=>{
-    const val = Number(document.getElementById('bidInput').value) || 0;
-    const myBudget = roomData.players[ME].budget;
-    if(val <= 0 || val > myBudget){ alert('Invalid bid amount (must be >0 and ≤ your budget)'); return; }
-    // write bid to rooms/{room}/bidding/bids/{ME}
-    const updates = {};
-    updates['bidding/bids/' + ME] = { uid: ME, name: roomData.players[ME].name, amount: val };
-    await update(roomRef, updates);
-    log('You placed a bid: ₹' + val);
-    // check if both bids present now -> resolve
-    setTimeout(()=> checkResolveBids(), 600); // slight delay for realtime propagation
-  };
+  // Wire up buttons if it's my turn
+  if(isMyTurn){
+    document.getElementById('bidBtn').onclick = async ()=>{
+      const val = Number(document.getElementById('bidInput').value) || 0;
+      const myBudget = roomData.players[ME].budget || 0;
+      const minAllowed = bidState.lastBid ? (bidState.lastBid.amount + 1) : pl.basePrice;
+      if(val <= 0 || val < minAllowed || val > myBudget){
+        alert(`Invalid bid. Minimum: ₹${minAllowed}, Maximum: ₹${myBudget}`);
+        return;
+      }
+      // set lastBid and switch turn to opponent
+      const nextTurn = ME === 'p1' ? 'p2' : 'p1';
+      await update(roomRef, { 'bidding/lastBid': { uid: ME, name: roomData.players[ME].name, amount: val }, 'bidding/turn': nextTurn });
+      log(`${roomData.players[ME].name} bid ₹${val}`);
+    };
 
-  document.getElementById('cancelBidBtn').onclick = async ()=>{
-    // cancel bidding round
-    await update(roomRef, { 'bidding/activeFor': null, 'bidding/roundOpen': false, 'bidding/bids': {} });
-    log('Bidding cancelled');
+    document.getElementById('withdrawBtn').onclick = async ()=>{
+      // If there is a lastBid by opponent -> finalize that opponent as winner
+      const last = bidState.lastBid;
+      const opponent = ME === 'p1' ? 'p2' : 'p1';
+
+      if(!last){
+        // no bids yet, withdraw cancels auction
+        await update(roomRef, { 'bidding': { activeFor: null, roundOpen: false, turn: null, lastBid: null } });
+        log(`${roomData.players[ME].name} withdrew (no bids). Auction cancelled.`);
+        return;
+      }
+
+      // If lastBid exists, then whoever placed lastBid wins. But ensure lastBid.uid !== ME (if ME was last bidder withdrawing on my own, treat as cancel)
+      if(last.uid === ME){
+        // If you are withdrawing but you are the last bidder -> interpret as cancelling your own last bid -> revert to opponent (we'll treat as cancel)
+        await update(roomRef, { 'bidding': { activeFor: null, roundOpen: false, turn: null, lastBid: null } });
+        log(`${roomData.players[ME].name} cancelled the bidding (their own last bid).`);
+        return;
+      }
+      // Otherwise finalize winner = last
+      await finalizeWinner(last);
+    };
+  }
+
+  // Force cancel (anyone can press) - will cancel auction round
+  document.getElementById('forceCancel').onclick = async ()=>{
+    if(!confirm('Cancel this auction round?')) return;
+    await update(roomRef, { 'bidding': { activeFor: null, roundOpen: false, turn: null, lastBid: null } });
+    log('Auction cancelled by user.');
   };
 }
 
-/* --- check and resolve bids --- */
-async function checkResolveBids(){
-  const bsnap = (roomData && roomData.bidding) ? roomData.bidding : null;
-  if(!bsnap) return;
-  const bids = bsnap.bids || {};
-  if(Object.keys(bids).length < 2) return; // wait for both
-  // resolve
-  const arr = Object.values(bids);
-  const max = Math.max(...arr.map(a=>a.amount));
-  const top = arr.filter(x=>x.amount === max);
-  const winner = (top.length === 1) ? top[0] : top[Math.floor(Math.random()*top.length)];
-  const loser = arr.find(x=>x.uid !== winner.uid);
-  const playerId = bsnap.activeFor;
-  const playerObj = (roomData.pool||[]).find(x=>x.id===playerId);
+/* --- finalize winner: assign player, deduct budget, remove from pool --- */
+async function finalizeWinner(winner){
+  // winner: { uid, name, amount }
+  const r = roomData;
+  if(!r || !r.bidding || !r.bidding.activeFor) return;
+  const playerId = r.bidding.activeFor;
+  const playerObj = (r.pool || []).find(p=>p.id === playerId);
+  if(!playerObj){
+    // if not found, just clear bidding
+    await update(roomRef, { 'bidding': { activeFor: null, roundOpen: false, turn: null, lastBid: null } });
+    log('Player missing from pool. Auction closed.');
+    return;
+  }
 
-  // update winner's squad and budgets
   const updates = {};
-  // winner add player
-  const wSquadPath = `players/${winner.uid}/squad`;
-  const lSquadPath = `players/${loser.uid}/squad`;
-  const winnerSquad = (roomData.players && roomData.players[winner.uid] && roomData.players[winner.uid].squad) ? roomData.players[winner.uid].squad.slice() : [];
-  const loserSquad = (roomData.players && roomData.players[loser.uid] && roomData.players[loser.uid].squad) ? roomData.players[loser.uid].squad.slice() : [];
+  // add to winner's squad
+  const winnerSquad = (r.players?.[winner.uid]?.squad || []).slice();
   winnerSquad.push(playerObj);
+  updates[`players/${winner.uid}/squad`] = winnerSquad;
   // deduct budget
-  const wBudget = (roomData.players[winner.uid].budget || 0) - winner.amount;
+  const wBudget = (r.players?.[winner.uid]?.budget || 0) - winner.amount;
   updates[`players/${winner.uid}/budget`] = wBudget;
-  updates[wSquadPath] = winnerSquad;
-  // leave loser budget unchanged
-  // clear bidding activeFor & bids
-  updates['bidding/activeFor'] = null;
-  updates['bidding/roundOpen'] = false;
-  updates['bidding/bids'] = {};
+  // remove player from pool
+  const newPool = (r.pool || []).filter(p=>p.id !== playerId);
+  updates['pool'] = newPool;
+  // clear bidding
+  updates['bidding'] = { activeFor: null, roundOpen: false, turn: null, lastBid: null };
 
-  // apply updates atomically
   await update(roomRef, updates);
   log(`${winner.name} won ${playerObj.name} for ₹${winner.amount}`);
 
-  // check if both squads full -> readyToStart
+  // check readiness
   setTimeout(()=> checkReadyToStart(), 400);
 }
 
@@ -330,17 +396,15 @@ startMatchBtn.onclick = async ()=>{
   const r = roomData;
   if(!r) return;
   if(r.status === 'playing'){ alert('Match already playing'); return; }
-  // ensure both players exist
   if(!r.players || !r.players.p1 || !r.players.p2){ alert('Need 2 players in room'); return; }
-  // build game object
   const teamSize = Number(teamSizeInput.value) || 11;
   const game = {
     createdAt: Date.now(),
     oversTotal: 20,
     innings: 1,
-    currentOverBalls: 0, // balls in current over (0..5)
+    currentOverBalls: 0,
     oversCompleted: 0,
-    bowlerOvers: {}, // { bowlerId: oversBowled }
+    bowlerOvers: {},
     teamA: { name: r.players.p1.name, players: (r.players.p1.squad||[]).slice(0,teamSize), score: 0, wickets: 0 },
     teamB: { name: r.players.p2.name, players: (r.players.p2.squad||[]).slice(0,teamSize), score: 0, wickets: 0 },
     ballLog: [],
@@ -348,11 +412,10 @@ startMatchBtn.onclick = async ()=>{
   };
   await update(roomRef, { status: 'playing', game });
   log('Match started between ' + game.teamA.name + ' and ' + game.teamB.name);
-  // start engine on server-like client (this browser will simulate)
   startEngine();
 }
 
-/* --- match engine: simulate balls & overs automatically --- */
+/* --- match engine: unchanged --- */
 let engineInterval = null;
 function startEngine(){
   if(engineInterval) clearInterval(engineInterval);
@@ -363,17 +426,13 @@ function startEngine(){
     const g = r.game;
     if(g.finished) return clearInterval(engineInterval);
 
-    // determine batting/bowling sides by innings
     const batting = (g.innings === 1) ? g.teamA : g.teamB;
     const bowling = (g.innings === 1) ? g.teamB : g.teamA;
 
-    // pick random batter (alive) and pick bowler obeying 5-over limit
     const batter = batting.players[Math.floor(Math.random()*batting.players.length)];
-    // choose bowler who has <5 overs else choose random
     const candidates = bowling.players.filter(b => (g.bowlerOvers && (g.bowlerOvers[b.id] || 0) < 5));
     const bowler = (candidates.length>0) ? candidates[Math.floor(Math.random()*candidates.length)] : bowling.players[Math.floor(Math.random()*bowling.players.length)];
 
-    // simulate single ball
     const outcome = simulateBall(batter, bowler);
     const ballEntry = `${g.innings} | O${g.oversCompleted}.${g.currentOverBalls+1} | ${batter.name} vs ${bowler.name} -> ${outcome.type}${outcome.runs?(' '+outcome.runs):''}`;
     g.ballLog = g.ballLog || [];
@@ -382,38 +441,29 @@ function startEngine(){
     if(outcome.type === 'runs'){
       if(g.innings === 1) g.teamA.score += outcome.runs;
       else g.teamB.score += outcome.runs;
-    } else if(outcome.type === 'dot'){
-      // nothing
     } else if(outcome.type === 'out'){
       if(g.innings === 1) g.teamA.wickets += 1;
       else g.teamB.wickets += 1;
     } else if(outcome.type === 'noball'){
       if(g.innings === 1) g.teamA.score += outcome.runs;
       else g.teamB.score += outcome.runs;
-      // free hit not separately simulated (treat next ball as normal)
     }
 
-    // increment ball count
     g.currentOverBalls += 1;
-    // if bowler completed integer over
     if(g.currentOverBalls >= 6){
       g.oversCompleted += 1;
       g.currentOverBalls = 0;
-      // count bowler over
       g.bowlerOvers = g.bowlerOvers || {};
       g.bowlerOvers[bowler.id] = (g.bowlerOvers[bowler.id]||0) + 1;
     }
 
-    // innings end conditions
     if(g.oversCompleted >= g.oversTotal){
       if(g.innings === 1){
-        // switch innings
         g.innings = 2;
         g.oversCompleted = 0;
         g.currentOverBalls = 0;
         log('Innings change. Target: ' + g.teamA.score);
       } else {
-        // match end
         g.finished = true;
         const result = computeResult(g);
         await update(roomRef, { game: g, status: 'finished' });
@@ -423,7 +473,6 @@ function startEngine(){
       }
     }
 
-    // wicket all out
     if((g.innings === 1 && g.teamA.wickets >= 10) || (g.innings === 2 && g.teamB.wickets >= 10)){
       if(g.innings === 1){
         g.innings = 2; g.oversCompleted = 0; g.currentOverBalls = 0;
@@ -438,33 +487,27 @@ function startEngine(){
       }
     }
 
-    // write updated game
     await update(roomRef, { game: g });
 
-  }, 1200); // ball pace; change as you like
+  }, 1200);
 }
 
-/* --- compute final result string --- */
 function computeResult(g){
   if(g.teamB.score > g.teamA.score) return `${g.teamB.name} won by ${g.teamB.score - g.teamA.score} runs (chase)`;
   if(g.teamB.score === g.teamA.score) return 'Match tied';
   return `${g.teamA.name} won by ${g.teamA.score - g.teamB.score} runs`;
 }
 
-/* --- simulateBall uses mapping & stats influence --- */
 function simulateBall(batter, bowler){
-  // mapping digits 0..9 probabilities baseline
-  let base = [10,12,12,12,10,8,6,3,7,5]; // 0..9 baseline
+  let base = [10,12,12,12,10,8,6,3,7,5];
   const batFactor = (batter && batter.bat) ? (batter.bat/100) : 0.6;
   const bowlFactor = (bowler && bowler.bowl) ? (bowler.bowl/100) : 0.6;
-  const diff = batFactor - bowlFactor; // + => advantage to batter
+  const diff = batFactor - bowlFactor;
 
   for(let i=1;i<=6;i++){
     base[i] = Math.max(2, Math.round(base[i] * (1 + diff*0.45)));
   }
-  // wicket (8) increases if bowler stronger
   base[8] = Math.max(1, Math.round(base[8] * (1 - diff*0.7)));
-  // normalize
   const total = base.reduce((a,b)=>a+b,0);
   let r = Math.floor(Math.random()*total);
   let cum = 0, chosen=0;
@@ -477,7 +520,7 @@ function simulateBall(batter, bowler){
   return { type: 'dot', runs: 0 };
 }
 
-/* --- helper: generate pool fallback (same as index) --- */
+/* --- helper: generate pool fallback --- */
 function generatePool(){
   const names = [
     "Virat","Rohit","Kohli","Bumrah","Jadeja","KL Rahul","Hardik","Shami","Iyer","Gill",
@@ -503,22 +546,6 @@ function renderScoreboard(game){
   `;
   scoreboard.innerHTML = s;
 }
-
-/* --- check resolve when bids update (listen is on roomRef change already) --- */
-onValue(roomRef, snap => {
-  const r = snap.val();
-  if(!r) return;
-  // if both bids present -> our earlier onValue->renderRoom then check
-  if(r.bidding && r.bidding.bids && Object.keys(r.bidding.bids).length >= 2){
-    // attempt resolve (we already checkResolveBids from UI but also ensure server-safe)
-    // to avoid race solve here too: first client hitting resolves
-    // We'll attempt to resolve only if bidding.roundOpen true and activeFor present
-    if(r.bidding.roundOpen && r.bidding.activeFor){
-      // one-time resolve by any client
-      checkResolveBids();
-    }
-  }
-});
 
 /* --- end room (delete) --- */
 endRoomBtn.onclick = async ()=>{
