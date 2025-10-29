@@ -344,38 +344,33 @@ function renderBidding(bidState){
 }
 
 /* --- finalize winner: assign player, deduct budget, remove from pool --- */
-async function finalizeWinner(winner){
-  // winner: { uid, name, amount }
-  const r = roomData;
-  if(!r || !r.bidding || !r.bidding.activeFor) return;
-  const playerId = r.bidding.activeFor;
-  const playerObj = (r.pool || []).find(p=>p.id === playerId);
-  if(!playerObj){
-    // if not found, just clear bidding
-    await update(roomRef, { 'bidding': { activeFor: null, roundOpen: false, turn: null, lastBid: null } });
-    log('Player missing from pool. Auction closed.');
-    return;
-  }
+async function finalizeWinner(winner) {
+  const playerId = roomData.bidding.activeFor;
+  const playerObj = (roomData.pool || []).find(x => x.id === playerId);
+  if (!playerObj) return;
 
   const updates = {};
-  // add to winner's squad
-  const winnerSquad = (r.players?.[winner.uid]?.squad || []).slice();
+
+  // 1️⃣ Add player to winner's squad
+  const winnerSquad = (roomData.players[winner.uid].squad || []).slice();
   winnerSquad.push(playerObj);
+
+  // 2️⃣ Deduct bid amount
+  const newBudget = (roomData.players[winner.uid].budget || 0) - winner.amount;
+
+  // 3️⃣ Remove player from pool
+  const newPool = (roomData.pool || []).filter(p => p.id !== playerId);
+
+  // 4️⃣ Update everything in Firebase
   updates[`players/${winner.uid}/squad`] = winnerSquad;
-  // deduct budget
-  const wBudget = (r.players?.[winner.uid]?.budget || 0) - winner.amount;
-  updates[`players/${winner.uid}/budget`] = wBudget;
-  // remove player from pool
-  const newPool = (r.pool || []).filter(p=>p.id !== playerId);
-  updates['pool'] = newPool;
-  // clear bidding
-  updates['bidding'] = { activeFor: null, roundOpen: false, turn: null, lastBid: null };
+  updates[`players/${winner.uid}/budget`] = newBudget;
+  updates[`pool`] = newPool;
+  updates[`bidding`] = { activeFor: null, roundOpen: false, bids: {}, turn: null, lastBid: null };
 
   await update(roomRef, updates);
-  log(`${winner.name} won ${playerObj.name} for ₹${winner.amount}`);
 
-  // check readiness
-  setTimeout(()=> checkReadyToStart(), 400);
+  log(`${winner.name} won ${playerObj.name} for ₹${winner.amount}`);
+  setTimeout(() => checkReadyToStart(), 400);
 }
 
 /* --- check readiness to start match --- */
