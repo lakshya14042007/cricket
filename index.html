@@ -1,166 +1,156 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bid Cricket - Room</title>
-  <style>
-    body {
-      font-family: "Poppins", sans-serif;
-      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-      color: white;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-    }
-    input, button {
-      padding: 10px;
-      margin: 10px;
-      border-radius: 8px;
-      border: none;
-      font-size: 1rem;
-    }
-    input { width: 200px; }
-    button {
-      background: #00b894;
-      color: white;
-      cursor: pointer;
-      transition: 0.3s;
-    }
-    button:hover { background: #019270; }
-    .room-status {
-      margin-top: 20px;
-      padding: 15px;
-      border: 2px solid white;
-      border-radius: 10px;
-      width: 260px;
-      text-align: center;
-      background: rgba(255,255,255,0.1);
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Bid Cricket — Join</title>
+<style>
+  :root{--bg:#071026;--card:#0b1724;--accent:#00d4ff;--muted:#9fb3c8}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,Roboto,Arial;background:linear-gradient(180deg,var(--bg),#081427);color:#eaf6ff}
+  .wrap{max-width:860px;margin:18px auto;padding:16px}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  h1{margin:0 0 8px 0;font-size:1.4rem}
+  label{display:block;margin:8px 0 4px;color:var(--muted);font-size:0.9rem}
+  input{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+  .row{display:flex;gap:8px;margin-top:12px}
+  .btn{padding:10px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+  .btn-primary{background:var(--accent);color:#002}
+  .muted{color:var(--muted);font-size:0.9rem}
+  .small{font-size:0.85rem;color:var(--muted)}
+  @media(max-width:600px){ .row{flex-direction:column} }
+</style>
 </head>
 <body>
-  <h1>🏏 Bid Cricket</h1>
-  <input id="nameInput" placeholder="Enter your name" />
-  <input id="roomIdInput" placeholder="Enter Room ID" />
-  <div>
-    <button id="createRoomBtn">Create Room</button>
-    <button id="joinRoomBtn">Join Room</button>
+  <div class="wrap">
+    <div class="card">
+      <h1>Bid Cricket — Create / Join Room</h1>
+      <div class="small">Enter Room ID, same budget for both players, then start. Share Room ID to friend.</div>
+
+      <label for="playerName">Your name</label>
+      <input id="playerName" placeholder="e.g. Lakshya" />
+
+      <label for="roomId">Room ID</label>
+      <input id="roomId" placeholder="e.g. room-1234" />
+
+      <label for="startBudget">Starting budget</label>
+      <input id="startBudget" type="number" value="100000" />
+
+      <div class="row" style="margin-top:14px">
+        <button id="createBtn" class="btn btn-primary">Create Room</button>
+        <button id="joinBtn" class="btn">Join Room</button>
+        <button id="genBtn" class="btn">Generate ID</button>
+      </div>
+
+      <p id="info" class="muted" style="margin-top:12px"></p>
+    </div>
   </div>
-  <div class="room-status" id="roomStatus">Waiting for room info...</div>
 
-  <script type="module">
-    // ✅ Firebase Setup
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-    import { getDatabase, ref, set, get, onValue, update } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+import { getDatabase, ref, get, set, update } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyBDSVyEgkdh_gJuYjvLY2KenX3efMIfd34",
-      authDomain: "bid-cricket.firebaseapp.com",
-      projectId: "bid-cricket",
-      storageBucket: "bid-cricket.firebasestorage.app",
-      messagingSenderId: "261417896823",
-      appId: "1:261417896823:web:ccfae5b573a2897558af72",
-      databaseURL: "https://bid-cricket-default-rtdb.asia-southeast1.firebasedatabase.app/"
-    };
+const firebaseConfig = {
+  apiKey: "AIzaSyBDSVyEgkdh_gJuYjvLY2KenX3efMIfd34",
+  authDomain: "bid-cricket.firebaseapp.com",
+  databaseURL: "https://bid-cricket-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "bid-cricket",
+  storageBucket: "bid-cricket.firebasestorage.app",
+  messagingSenderId: "261417896823",
+  appId: "1:261417896823:web:ccfae5b573a2897558af72",
+  measurementId: "G-ZLR9WM5YH9"
+};
 
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
 
-    // ✅ Elements
-    const nameInput = document.getElementById("nameInput");
-    const roomIdInput = document.getElementById("roomIdInput");
-    const createRoomBtn = document.getElementById("createRoomBtn");
-    const joinRoomBtn = document.getElementById("joinRoomBtn");
-    const roomStatus = document.getElementById("roomStatus");
+const nameInput = document.getElementById('playerName');
+const roomInput = document.getElementById('roomId');
+const budgetInput = document.getElementById('startBudget');
+const info = document.getElementById('info');
 
-    // ✅ Create Room
-    createRoomBtn.onclick = async () => {
-      const name = nameInput.value.trim();
-      if (!name) return alert("Enter name first!");
-      const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+document.getElementById('genBtn').onclick = () => {
+  const id = 'room-' + Math.random().toString(36).substring(2,9);
+  roomInput.value = id;
+};
 
-      await set(ref(db, "rooms/" + roomId), {
-        player1: name,
-        player2: null
-      });
+async function createRoom(id, name, budget){
+  const roomRef = ref(db, 'rooms/' + id);
+  const snap = await get(roomRef);
+  if(snap.exists()){
+    info.innerText = 'Room already exists — joining instead.';
+    return joinRoom(id, name, budget);
+  }
+  const initial = {
+    createdAt: Date.now(),
+    status: 'waiting',
+    budget: Number(budget),
+    players: {
+      p1: { name, budget: Number(budget), squad: [] }
+    },
+    pool: null,
+    bidding: { index: 0, activeFor: null, roundOpen: false, bids: {} },
+    game: null
+  };
+  await set(roomRef, initial);
 
-      localStorage.setItem("roomId", roomId);
-      localStorage.setItem("playerName", name);
-      roomStatus.innerText = `Room created: ${roomId}\nWaiting for Player 2...`;
+  const url = `game.html?room=${encodeURIComponent(id)}&me=${encodeURIComponent('p1')}`;
+  window.location.href = url;
+}
 
-      listenRoom(roomId);
-    };
+async function joinRoom(id, name, budget){
+  const roomRef = ref(db, 'rooms/' + id);
+  const snap = await get(roomRef);
+  if(!snap.exists()){
+    info.innerText = 'Room not found — create first.';
+    return;
+  }
+  const room = snap.val();
+  if(room.players && room.players.p2){
+    info.innerText = 'Room is full.';
+    return;
+  }
 
-    // ✅ Join Room
-    joinRoomBtn.onclick = async () => {
-      const name = nameInput.value.trim();
-      const roomId = roomIdInput.value.trim().toUpperCase();
-      if (!name || !roomId) return alert("Enter both name and room ID");
+  const pool = room.pool || generatePool();
+  await update(roomRef, { 
+    pool,
+    status: 'bidding',
+    'players/p2': { name, budget: Number(budget), squad: [] }
+  });
 
-      const roomRef = ref(db, "rooms/" + roomId);
-      const snapshot = await get(roomRef);
+  const url = `game.html?room=${encodeURIComponent(id)}&me=${encodeURIComponent('p2')}`;
+  window.location.href = url;
+}
 
-      if (!snapshot.exists()) {
-        alert("Room not found!");
-        return;
-      }
+function generatePool(){
+  const names = [
+    "Virat","Rohit","Kohli","Bumrah","Jadeja","KL Rahul","Hardik","Shami","Iyer","Gill",
+    "Pant","Shubman","Axar","Siraj","Rahane","Vikram","Bishnoi","Yadav","Narine",
+    "Stokes","Root","Smith","Williamson","De Kock","Babar","Tamim","Fakhar","Rashid","Curran",
+    "Rabada","Boult","Anderson","Zampa","Miller","Niroshan","Southee","Hasan"
+  ].slice(0,36);
+  return names.map((n,i)=>{
+    const bat = Math.round(40 + Math.random()*60);
+    const bowl = Math.round(35 + Math.random()*65);
+    const aggr = Math.round(30 + Math.random()*70);
+    return { id:'pl'+(i+1), name:n, role:(i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')), bat, bowl, aggr, basePrice:5000+Math.round(Math.random()*15000) };
+  });
+}
 
-      const data = snapshot.val();
-
-      if (!data.player1) {
-        await update(roomRef, { player1: name });
-      } else if (!data.player2) {
-        await update(roomRef, { player2: name });
-      } else {
-        alert("Room full! Cannot join.");
-        return;
-      }
-
-      localStorage.setItem("roomId", roomId);
-      localStorage.setItem("playerName", name);
-      roomStatus.innerText = `Joined Room: ${roomId}`;
-      listenRoom(roomId);
-    };
-
-    // ✅ Realtime Update Listener
-    function listenRoom(roomId) {
-      const roomRef = ref(db, "rooms/" + roomId);
-      onValue(roomRef, (snapshot) => {
-        const data = snapshot.val();
-        if (!data) return;
-
-        let statusText = `Room ID: ${roomId}\n`;
-        statusText += `Player 1: ${data.player1 || "Waiting..."}\n`;
-        statusText += `Player 2: ${data.player2 || "Waiting..."}`;
-        roomStatus.innerText = statusText;
-
-        // ✅ Both players joined
-        if (data.player1 && data.player2) {
-          setTimeout(() => {
-            window.location.href = "game.html";
-          }, 1500);
-        }
-      });
-    }
-
-    // ✅ Remove player when they leave
-    window.addEventListener("beforeunload", async () => {
-      const roomId = localStorage.getItem("roomId");
-      const name = localStorage.getItem("playerName");
-      if (!roomId || !name) return;
-
-      const roomRef = ref(db, "rooms/" + roomId);
-      const snapshot = await get(roomRef);
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        if (data.player1 === name) await update(roomRef, { player1: null });
-        if (data.player2 === name) await update(roomRef, { player2: null });
-      }
-    });
-  </script>
+document.getElementById('createBtn').onclick = ()=>{
+  const id = roomInput.value.trim();
+  const name = nameInput.value.trim();
+  const budget = Number(budgetInput.value) || 100000;
+  if(!id || !name){ info.innerText = 'Enter name & room ID.'; return; }
+  createRoom(id, name, budget);
+};
+document.getElementById('joinBtn').onclick = ()=>{
+  const id = roomInput.value.trim();
+  const name = nameInput.value.trim();
+  const budget = Number(budgetInput.value) || 100000;
+  if(!id || !name){ info.innerText = 'Enter name & room ID.'; return; }
+  joinRoom(id, name, budget);
+};
+</script>
 </body>
 </html>
