@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Firebase Test</title>
+</head>
+<body>
+  <h1>Firebase Test Page</h1>
+  <button id="writeBtn">Write to DB</button>
+  <button id="readBtn">Read from DB</button>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+    import { getDatabase, ref, set, get } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBDSVyEgkdh_gJuYjvLY2KenX3efMIfd34",
+      authDomain: "bid-cricket.firebaseapp.com",
+      projectId: "bid-cricket",
+      storageBucket: "bid-cricket.firebasestorage.app",
+      messagingSenderId: "261417896823",
+      appId: "1:261417896823:web:ccfae5b573a2897558af72",
+      measurementId: "G-ZLR9WM5YH9"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    document.querySelector("#writeBtn").addEventListener("click", async () => {
+      await set(ref(db, 'test/message'), {
+        text: "Firebase connected successfully!"
+      });
+      alert("✅ Data written to Firebase!");
+    });
+
+    document.querySelector("#readBtn").addEventListener("click", async () => {
+      const snapshot = await get(ref(db, 'test/message'));
+      if (snapshot.exists()) {
+        alert("📦 Read from DB: " + snapshot.val().text);
+      } else {
+        alert("❌ No data found!");
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Bid Cricket — Join</title>
+<style>
+  :root{--bg:#071026;--card:#0b1724;--accent:#00d4ff;--muted:#9fb3c8}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,Roboto,Arial;background:linear-gradient(180deg,var(--bg),#081427);color:#eaf6ff}
+  .wrap{max-width:860px;margin:18px auto;padding:16px}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  h1{margin:0 0 8px 0;font-size:1.4rem}
+  label{display:block;margin:8px 0 4px;color:var(--muted);font-size:0.9rem}
+  input{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+  .row{display:flex;gap:8px;margin-top:12px}
+  .btn{padding:10px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+  .btn-primary{background:var(--accent);color:#002}
+  .muted{color:var(--muted);font-size:0.9rem}
+  .small{font-size:0.85rem;color:var(--muted)}
+  @media(max-width:600px){ .row{flex-direction:column} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Bid Cricket — Create / Join Room</h1>
+      <div class="small">Simple: enter a Room ID, set same budget for both players, then open the room. Share Room ID to friend.</div>
+
+      <label for="playerName">Your name</label>
+      <input id="playerName" placeholder="e.g. Lakshya" />
+
+      <label for="roomId">Room ID</label>
+      <input id="roomId" placeholder="type or generate (e.g. room-1234)" />
+
+      <label for="startBudget">Starting budget (both players will use same)</label>
+      <input id="startBudget" type="number" value="100000" />
+
+      <div class="row" style="margin-top:14px">
+        <button id="createBtn" class="btn btn-primary">Create & Enter Room</button>
+        <button id="joinBtn" class="btn">Join Room</button>
+        <button id="genBtn" class="btn">Generate ID</button>
+      </div>
+
+      <p id="info" class="muted" style="margin-top:12px">Enable Firebase Realtime DB & paste config in code if not done yet.</p>
+    </div>
+  </div>
+
+<script type="module">
+/*
+ index.html: creates/joins room then redirects to game.html
+ Uses Firebase modular SDK (v12.x) Realtime Database
+*/
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+import { getDatabase, ref, get, set, update, onValue } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBDSVyEgkdh_gJuYjvLY2KenX3efMIfd34",
+  authDomain: "bid-cricket.firebaseapp.com",
+  databaseURL: "https://bid-cricket-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "bid-cricket",
+  storageBucket: "bid-cricket.firebasestorage.app",
+  messagingSenderId: "261417896823",
+  appId: "1:261417896823:web:ccfae5b573a2897558af72",
+  measurementId: "G-ZLR9WM5YH9"
+};
+
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+const playerName = document.getElementById('playerName');
+const roomIdEl = document.getElementById('roomId');
+const startBudgetEl = document.getElementById('startBudget');
+const info = document.getElementById('info');
+
+document.getElementById('genBtn').onclick = ()=>{
+  const id = 'room-' + Math.random().toString(36).substring(2,9);
+  roomIdEl.value = id;
+};
+
+async function createRoom(id, name, budget){
+  const roomRef = ref(db, 'rooms/' + id);
+  const snap = await get(roomRef);
+  if(snap.exists()){
+    info.innerText = 'Room already exists — joining instead.';
+    return joinRoom(id, name, budget);
+  }
+  const initial = {
+    createdAt: Date.now(),
+    status: 'waiting', // waiting -> bidding -> playing -> finished
+    budget: Number(budget),
+    players: {
+      p1: { name: name || 'Player1', budget: Number(budget), squad: [] }
+    },
+    pool: null, // will set on first entrance (same pool for both)
+    bidding: { index: 0, activeFor: null, roundOpen: false, bids: {} },
+    game: null
+  };
+  await set(roomRef, initial);
+  window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p1`;
+}
+
+async function joinRoom(id, name, budget){
+  const roomRef = ref(db, 'rooms/' + id);
+  const snap = await get(roomRef);
+  if(!snap.exists()){
+    info.innerText = 'Room not found — create it first.';
+    return;
+  }
+  const room = snap.val();
+  if(room.players && room.players.p2){
+    info.innerText = 'Room is full (already has 2 players).';
+    return;
+  }
+  // join as p2; ensure budgets match (we enforce same shared starting budget)
+  await update(roomRef, { 'players/p2': { name: name||'Player2', budget: Number(budget), squad: [] }, status: 'bidding' });
+  // set pool if not present: we keep pool in room so both clients use same stats
+  if(!room.pool){
+    // create pool of 36 players with stats
+    const pool = generatePool();
+    await update(roomRef, { pool });
+  }
+  window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p2`;
+}
+
+function generatePool(){
+  // deterministic-ish names + stats (36 players)
+  const names = [
+    "Virat","Rohit","Kohli","Bumrah","Jadeja","KL Rahul","Hardik","Shami","Iyer","Gill",
+    "Pant","Shubman","Axar","Siraj","Rahul","Rahane","Vikram","Bishnoi","Yadav","Narine",
+    "Stokes","Root","Smith","Williamson","De Kock","Babar","Tamim","Fakhar","Rashid","Curran",
+    "Rabada","Boult","Anderson","Zampa","Miller","Niroshan","Southee","Hasan"
+  ].slice(0,36);
+  return names.map((n,i)=>{
+    const bat = Math.round(40 + Math.random()*60); // 40-100
+    const bowl = Math.round(35 + Math.random()*65); // 35-100
+    const aggr = Math.round(30 + Math.random()*70);
+    return { id: 'pl'+(i+1), name: n, role: (i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')), bat, bowl, aggr, basePrice: 5000 + Math.round(Math.random()*15000) };
+  });
+}
+
+document.getElementById('createBtn').onclick = ()=>{
+  const id = roomIdEl.value.trim();
+  const name = playerName.value.trim();
+  const budget = Number(startBudgetEl.value) || 100000;
+  if(!id || !name){ info.innerText = 'Enter room id and name.'; return; }
+  createRoom(id, name, budget);
+};
+document.getElementById('joinBtn').onclick = ()=>{
+  const id = roomIdEl.value.trim();
+  const name = playerName.value.trim();
+  const budget = Number(startBudgetEl.value) || 100000;
+  if(!id || !name){ info.innerText = 'Enter room id and name.'; return; }
+  joinRoom(id, name, budget);
+};
+</script>
+</body>
+</html>
