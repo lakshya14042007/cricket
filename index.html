@@ -27,16 +27,16 @@
       <h1>🏏 Bid Cricket — Create / Join Room</h1>
       <div class="small">Enter Room ID, same budget for both players. Share Room ID with your friend to join.</div>
 
-      <label for="playerName">Your name</label>
+      <label>Your name</label>
       <input id="playerName" placeholder="e.g. Lakshya" />
 
-      <label for="roomId">Room ID</label>
+      <label>Room ID</label>
       <div class="row">
         <input id="roomId" placeholder="e.g. room-1234" />
         <button id="genBtn" class="btn">Generate</button>
       </div>
 
-      <label for="startBudget">Starting budget</label>
+      <label>Starting budget</label>
       <input id="startBudget" type="number" value="100000" />
 
       <div class="row" style="margin-top:14px">
@@ -81,25 +81,22 @@ const afterCreate = document.getElementById('afterCreate');
 const createdRoomId = document.getElementById('createdRoomId');
 
 document.getElementById('genBtn').onclick = () => {
-  const id = 'room-' + Math.random().toString(36).substring(2,9);
-  roomInput.value = id;
+  roomInput.value = 'room-' + Math.random().toString(36).substring(2,9);
 };
 
-// --- CREATE ROOM ---
+// Create Room
 async function createRoom(id, name, budget){
   const roomRef = ref(db, 'rooms/' + id);
   const snap = await get(roomRef);
-
-  if(snap.exists()){
-    info.innerText = '⚠️ Room already exists — try another ID.';
-    return;
-  }
+  if(snap.exists()){ info.innerText = '⚠️ Room already exists.'; return; }
 
   const initial = {
     createdAt: Date.now(),
     status: 'waiting',
     budget: Number(budget),
-    players: { p1: { name, budget: Number(budget), squad: [] } },
+    players: {
+      p1: { name, active: true, budget: Number(budget), squad: [] }
+    },
     pool: null,
     bidding: { index: 0, activeFor: null, roundOpen: false, bids: {} },
     game: null
@@ -111,36 +108,43 @@ async function createRoom(id, name, budget){
   info.innerText = 'Share this Room ID with your friend.';
 }
 
-// --- JOIN ROOM ---
+// Join Room
 async function joinRoom(id, name, budget){
   const roomRef = ref(db, 'rooms/' + id);
   const snap = await get(roomRef);
-  if(!snap.exists()){ info.innerText = '❌ Room not found — ask friend for correct ID.'; return; }
-
+  if(!snap.exists()){ info.innerText = '❌ Room not found.'; return; }
   const room = snap.val();
 
+  // If player already exists
   if(room.players?.p1?.name === name){
-    window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p1`;
+    await update(roomRef, {'players/p1/active': true});
+    window.location.href = `game.html?room=${id}&me=p1`;
     return;
   }
   if(room.players?.p2?.name === name){
-    window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p2`;
+    await update(roomRef, {'players/p2/active': true});
+    window.location.href = `game.html?room=${id}&me=p2`;
     return;
   }
 
-  if(room.players && room.players.p1 && room.players.p2){
+  // Remove inactive slots
+  if(room.players?.p1 && room.players.p1.active === false) delete room.players.p1;
+  if(room.players?.p2 && room.players.p2.active === false) delete room.players.p2;
+
+  if(room.players?.p1 && room.players?.p2){
     info.innerText = '🚫 Room is full.';
     return;
   }
 
+  const slot = room.players?.p1 ? 'p2' : 'p1';
   const pool = room.pool || generatePool();
-  await update(roomRef, { 
+  await update(roomRef, {
     pool,
     status: 'bidding',
-    'players/p2': { name, budget: Number(budget), squad: [] }
+    ['players/'+slot]: { name, active: true, budget: Number(budget), squad: [] }
   });
 
-  window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p2`;
+  window.location.href = `game.html?room=${id}&me=${slot}`;
 }
 
 function generatePool(){
@@ -185,8 +189,9 @@ document.getElementById('copyBtn').onclick = ()=>{
 document.getElementById('startBtn').onclick = ()=>{
   const id = createdRoomId.textContent;
   const name = nameInput.value.trim();
-  window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p1`;
+  window.location.href = `game.html?room=${id}&me=p1`;
 };
 </script>
 </body>
 </html>
+
