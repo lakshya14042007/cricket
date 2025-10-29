@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Bid Cricket — Join</title>
+<title>Bid Cricket — Room Setup</title>
 <style>
   :root{--bg:#071026;--card:#0b1724;--accent:#00d4ff;--muted:#9fb3c8}
   *{box-sizing:border-box}
@@ -24,14 +24,17 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Bid Cricket — Create / Join Room</h1>
-      <div class="small">Enter Room ID, same budget for both players, then start. Share Room ID to friend.</div>
+      <h1>🏏 Bid Cricket — Create / Join Room</h1>
+      <div class="small">Enter Room ID, same budget for both players. Share Room ID with your friend to join.</div>
 
       <label for="playerName">Your name</label>
       <input id="playerName" placeholder="e.g. Lakshya" />
 
       <label for="roomId">Room ID</label>
-      <input id="roomId" placeholder="e.g. room-1234" />
+      <div class="row">
+        <input id="roomId" placeholder="e.g. room-1234" />
+        <button id="genBtn" class="btn">Generate</button>
+      </div>
 
       <label for="startBudget">Starting budget</label>
       <input id="startBudget" type="number" value="100000" />
@@ -39,7 +42,13 @@
       <div class="row" style="margin-top:14px">
         <button id="createBtn" class="btn btn-primary">Create Room</button>
         <button id="joinBtn" class="btn">Join Room</button>
-        <button id="genBtn" class="btn">Generate ID</button>
+      </div>
+
+      <div id="afterCreate" style="display:none;margin-top:16px">
+        <p>✅ Room created successfully!</p>
+        <p>📋 <b>Room ID:</b> <span id="createdRoomId"></span></p>
+        <button id="copyBtn" class="btn">Copy ID</button>
+        <button id="startBtn" class="btn btn-primary">Start Game</button>
       </div>
 
       <p id="info" class="muted" style="margin-top:12px"></p>
@@ -68,46 +77,59 @@ const nameInput = document.getElementById('playerName');
 const roomInput = document.getElementById('roomId');
 const budgetInput = document.getElementById('startBudget');
 const info = document.getElementById('info');
+const afterCreate = document.getElementById('afterCreate');
+const createdRoomId = document.getElementById('createdRoomId');
 
 document.getElementById('genBtn').onclick = () => {
   const id = 'room-' + Math.random().toString(36).substring(2,9);
   roomInput.value = id;
 };
 
+// --- CREATE ROOM ---
 async function createRoom(id, name, budget){
   const roomRef = ref(db, 'rooms/' + id);
   const snap = await get(roomRef);
+
   if(snap.exists()){
-    info.innerText = 'Room already exists — joining instead.';
-    return joinRoom(id, name, budget);
+    info.innerText = '⚠️ Room already exists — try another ID.';
+    return;
   }
+
   const initial = {
     createdAt: Date.now(),
     status: 'waiting',
     budget: Number(budget),
-    players: {
-      p1: { name, budget: Number(budget), squad: [] }
-    },
+    players: { p1: { name, budget: Number(budget), squad: [] } },
     pool: null,
     bidding: { index: 0, activeFor: null, roundOpen: false, bids: {} },
     game: null
   };
-  await set(roomRef, initial);
 
-  const url = `game.html?room=${encodeURIComponent(id)}&me=${encodeURIComponent('p1')}`;
-  window.location.href = url;
+  await set(roomRef, initial);
+  afterCreate.style.display = 'block';
+  createdRoomId.textContent = id;
+  info.innerText = 'Share this Room ID with your friend.';
 }
 
+// --- JOIN ROOM ---
 async function joinRoom(id, name, budget){
   const roomRef = ref(db, 'rooms/' + id);
   const snap = await get(roomRef);
-  if(!snap.exists()){
-    info.innerText = 'Room not found — create first.';
+  if(!snap.exists()){ info.innerText = '❌ Room not found — ask friend for correct ID.'; return; }
+
+  const room = snap.val();
+
+  if(room.players?.p1?.name === name){
+    window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p1`;
     return;
   }
-  const room = snap.val();
-  if(room.players && room.players.p2){
-    info.innerText = 'Room is full.';
+  if(room.players?.p2?.name === name){
+    window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p2`;
+    return;
+  }
+
+  if(room.players && room.players.p1 && room.players.p2){
+    info.innerText = '🚫 Room is full.';
     return;
   }
 
@@ -118,8 +140,7 @@ async function joinRoom(id, name, budget){
     'players/p2': { name, budget: Number(budget), squad: [] }
   });
 
-  const url = `game.html?room=${encodeURIComponent(id)}&me=${encodeURIComponent('p2')}`;
-  window.location.href = url;
+  window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p2`;
 }
 
 function generatePool(){
@@ -128,13 +149,16 @@ function generatePool(){
     "Pant","Shubman","Axar","Siraj","Rahane","Vikram","Bishnoi","Yadav","Narine",
     "Stokes","Root","Smith","Williamson","De Kock","Babar","Tamim","Fakhar","Rashid","Curran",
     "Rabada","Boult","Anderson","Zampa","Miller","Niroshan","Southee","Hasan"
-  ].slice(0,36);
-  return names.map((n,i)=>{
-    const bat = Math.round(40 + Math.random()*60);
-    const bowl = Math.round(35 + Math.random()*65);
-    const aggr = Math.round(30 + Math.random()*70);
-    return { id:'pl'+(i+1), name:n, role:(i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')), bat, bowl, aggr, basePrice:5000+Math.round(Math.random()*15000) };
-  });
+  ];
+  return names.map((n,i)=>({
+    id:'pl'+(i+1),
+    name:n,
+    role:(i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')),
+    bat:Math.round(40 + Math.random()*60),
+    bowl:Math.round(35 + Math.random()*65),
+    aggr:Math.round(30 + Math.random()*70),
+    basePrice:5000+Math.round(Math.random()*15000)
+  }));
 }
 
 document.getElementById('createBtn').onclick = ()=>{
@@ -144,12 +168,24 @@ document.getElementById('createBtn').onclick = ()=>{
   if(!id || !name){ info.innerText = 'Enter name & room ID.'; return; }
   createRoom(id, name, budget);
 };
+
 document.getElementById('joinBtn').onclick = ()=>{
   const id = roomInput.value.trim();
   const name = nameInput.value.trim();
   const budget = Number(budgetInput.value) || 100000;
   if(!id || !name){ info.innerText = 'Enter name & room ID.'; return; }
   joinRoom(id, name, budget);
+};
+
+document.getElementById('copyBtn').onclick = ()=>{
+  navigator.clipboard.writeText(createdRoomId.textContent);
+  info.innerText = '✅ Room ID copied!';
+};
+
+document.getElementById('startBtn').onclick = ()=>{
+  const id = createdRoomId.textContent;
+  const name = nameInput.value.trim();
+  window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p1`;
 };
 </script>
 </body>
