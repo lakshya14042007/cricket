@@ -184,6 +184,15 @@ function renderRoom(r){
   renderScoreboard(r.game || null);
 }
 
+/* --- handle disconnect (remove player if leaves) --- */
+window.addEventListener("beforeunload", () => {
+  if (ROOM_ID && ME) {
+    const playerRef = ref(db, `rooms/${ROOM_ID}/players/${ME}`);
+    remove(playerRef);
+  }
+});
+
+
 /* --- pool rendering --- */
 function renderPool(pool){
   poolEl.innerHTML = '';
