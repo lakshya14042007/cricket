@@ -1,124 +1,192 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cricket Bidding Game</title>
-  <style>
-    body {
-      font-family: Poppins, sans-serif;
-      background: linear-gradient(135deg, #0a0a0a, #202020);
-      color: #fff;
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-    }
-    h1 { font-size: 2rem; margin-bottom: 1rem; }
-    input {
-      padding: 10px; margin: 8px; border-radius: 10px; border: none;
-      width: 200px; text-align: center;
-    }
-    button {
-      padding: 10px 20px; margin: 8px;
-      border: none; border-radius: 10px;
-      background: #00ff88; color: #000; font-weight: bold;
-      cursor: pointer; transition: 0.3s;
-    }
-    button:hover { background: #00cc6a; }
-    .info { margin-top: 15px; font-size: 0.9rem; color: #aaa; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Bid Cricket — Room Setup</title>
+<style>
+  :root{--bg:#071026;--card:#0b1724;--accent:#00d4ff;--muted:#9fb3c8}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,Roboto,Arial;background:linear-gradient(180deg,var(--bg),#081427);color:#eaf6ff}
+  .wrap{max-width:860px;margin:18px auto;padding:16px}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  h1{margin:0 0 8px 0;font-size:1.4rem}
+  label{display:block;margin:8px 0 4px;color:var(--muted);font-size:0.9rem}
+  input{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+  .row{display:flex;gap:8px;margin-top:12px}
+  .btn{padding:10px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+  .btn-primary{background:var(--accent);color:#002}
+  .muted{color:var(--muted);font-size:0.9rem}
+  .small{font-size:0.85rem;color:var(--muted)}
+  @media(max-width:600px){ .row{flex-direction:column} }
+</style>
 </head>
 <body>
-  <h1>🏏 Cricket Bidding Room</h1>
-  <input type="text" id="playerName" placeholder="Enter your name" /><br />
-  <input type="text" id="roomId" placeholder="Enter room ID (or create)" /><br />
-  <button id="createRoom">Create Room</button>
-  <button id="joinRoom">Join Room</button>
-  <p class="info" id="status"></p>
+  <div class="wrap">
+    <div class="card">
+      <h1>🏏 Bid Cricket — Create / Join Room</h1>
+      <div class="small">Enter Room ID, same budget for both players. Share Room ID with your friend to join.</div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-    import { getDatabase, ref, set, get, update, onValue, remove } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+      <label for="playerName">Your name</label>
+      <input id="playerName" placeholder="e.g. Lakshya" />
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyBDSVyEgkdh_gJuYjvLY2KenX3efMIfd34",
-      authDomain: "bid-cricket.firebaseapp.com",
-      projectId: "bid-cricket",
-      storageBucket: "bid-cricket.firebasestorage.app",
-      messagingSenderId: "261417896823",
-      appId: "1:261417896823:web:ccfae5b573a2897558af72",
-      measurementId: "G-ZLR9WM5YH9",
-      databaseURL: "https://bid-cricket-default-rtdb.asia-southeast1.firebasedatabase.app/"
-    };
+      <label for="roomId">Room ID</label>
+      <div class="row">
+        <input id="roomId" placeholder="e.g. room-1234" />
+        <button id="genBtn" class="btn">Generate</button>
+      </div>
 
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
+      <label for="startBudget">Starting budget</label>
+      <input id="startBudget" type="number" value="100000" />
 
-    const nameInput = document.getElementById("playerName");
-    const roomInput = document.getElementById("roomId");
-    const createBtn = document.getElementById("createRoom");
-    const joinBtn = document.getElementById("joinRoom");
-    const status = document.getElementById("status");
+      <div class="row" style="margin-top:14px">
+        <button id="createBtn" class="btn btn-primary">Create Room</button>
+        <button id="joinBtn" class="btn">Join Room</button>
+      </div>
 
-    // 🧠 Local restore if exists
-    const savedName = localStorage.getItem("playerName");
-    const savedRoom = localStorage.getItem("roomId");
-    if (savedName && savedRoom) {
-      status.innerText = `Welcome back ${savedName}! Reconnecting to room ${savedRoom}...`;
-      setTimeout(() => {
-        window.location.href = `game.html?room=${savedRoom}&player=${savedName}`;
-      }, 1500);
-    }
+      <div id="afterCreate" style="display:none;margin-top:16px">
+        <p>✅ Room created successfully!</p>
+        <p>📋 <b>Room ID:</b> <span id="createdRoomId"></span></p>
+        <button id="copyBtn" class="btn">Copy ID</button>
+        <button id="startBtn" class="btn btn-primary">Start Game</button>
+      </div>
 
-    // Create Room
-    createBtn.onclick = async () => {
-      const playerName = nameInput.value.trim();
-      if (!playerName) return alert("Enter your name first!");
-      const roomId = Math.random().toString(36).substring(2, 8);
-      await set(ref(db, `rooms/${roomId}`), {
-        players: { [playerName]: { role: "pl1", disconnected: false } },
-        createdAt: Date.now()
-      });
-      localStorage.setItem("playerName", playerName);
-      localStorage.setItem("roomId", roomId);
-      window.location.href = `game.html?room=${roomId}&player=${playerName}`;
-    };
+      <p id="info" class="muted" style="margin-top:12px"></p>
+    </div>
+  </div>
 
-    // Join Room
-    joinBtn.onclick = async () => {
-      const playerName = nameInput.value.trim();
-      const roomId = roomInput.value.trim();
-      if (!playerName || !roomId) return alert("Enter name and room ID!");
-      const roomRef = ref(db, `rooms/${roomId}`);
-      const snap = await get(roomRef);
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+import { getDatabase, ref, get, set, update } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
 
-      if (!snap.exists()) {
-        alert("Room not found!");
-        return;
-      }
+const firebaseConfig = {
+  apiKey: "AIzaSyBDSVyEgkdh_gJuYjvLY2KenX3efMIfd34",
+  authDomain: "bid-cricket.firebaseapp.com",
+  databaseURL: "https://bid-cricket-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "bid-cricket",
+  storageBucket: "bid-cricket.firebasestorage.app",
+  messagingSenderId: "261417896823",
+  appId: "1:261417896823:web:ccfae5b573a2897558af72",
+  measurementId: "G-ZLR9WM5YH9"
+};
 
-      const roomData = snap.val();
-      const players = roomData.players || {};
-      const playerCount = Object.keys(players).length;
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
 
-      if (players[playerName]) {
-        // reconnect
-        await update(ref(db, `rooms/${roomId}/players/${playerName}`), { disconnected: false });
-        localStorage.setItem("playerName", playerName);
-        localStorage.setItem("roomId", roomId);
-        window.location.href = `game.html?room=${roomId}&player=${playerName}`;
-      } else if (playerCount < 2) {
-        await update(ref(db, `rooms/${roomId}/players/${playerName}`), { role: playerCount === 0 ? "pl1" : "pl2", disconnected: false });
-        localStorage.setItem("playerName", playerName);
-        localStorage.setItem("roomId", roomId);
-        window.location.href = `game.html?room=${roomId}&player=${playerName}`;
-      } else {
-        alert("Room is full!");
-      }
-    };
-  </script>
+const nameInput = document.getElementById('playerName');
+const roomInput = document.getElementById('roomId');
+const budgetInput = document.getElementById('startBudget');
+const info = document.getElementById('info');
+const afterCreate = document.getElementById('afterCreate');
+const createdRoomId = document.getElementById('createdRoomId');
+
+document.getElementById('genBtn').onclick = () => {
+  const id = 'room-' + Math.random().toString(36).substring(2,9);
+  roomInput.value = id;
+};
+
+// --- CREATE ROOM ---
+async function createRoom(id, name, budget){
+  const roomRef = ref(db, 'rooms/' + id);
+  const snap = await get(roomRef);
+
+  if(snap.exists()){
+    info.innerText = '⚠️ Room already exists — try another ID.';
+    return;
+  }
+
+  const initial = {
+    createdAt: Date.now(),
+    status: 'waiting',
+    budget: Number(budget),
+    players: { p1: { name, budget: Number(budget), squad: [] } },
+    pool: null,
+    bidding: { index: 0, activeFor: null, roundOpen: false, bids: {} },
+    game: null
+  };
+
+  await set(roomRef, initial);
+  afterCreate.style.display = 'block';
+  createdRoomId.textContent = id;
+  info.innerText = 'Share this Room ID with your friend.';
+}
+
+// --- JOIN ROOM ---
+async function joinRoom(id, name, budget){
+  const roomRef = ref(db, 'rooms/' + id);
+  const snap = await get(roomRef);
+  if(!snap.exists()){ info.innerText = '❌ Room not found — ask friend for correct ID.'; return; }
+
+  const room = snap.val();
+
+  if(room.players?.p1?.name === name){
+    window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p1`;
+    return;
+  }
+  if(room.players?.p2?.name === name){
+    window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p2`;
+    return;
+  }
+
+  if(room.players && room.players.p1 && room.players.p2){
+    info.innerText = '🚫 Room is full.';
+    return;
+  }
+
+  const pool = room.pool || generatePool();
+  await update(roomRef, { 
+    pool,
+    status: 'bidding',
+    'players/p2': { name, budget: Number(budget), squad: [] }
+  });
+
+  window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p2`;
+}
+
+function generatePool(){
+  const names = [
+    "Virat","Rohit","Kohli","Bumrah","Jadeja","KL Rahul","Hardik","Shami","Iyer","Gill",
+    "Pant","Shubman","Axar","Siraj","Rahane","Vikram","Bishnoi","Yadav","Narine",
+    "Stokes","Root","Smith","Williamson","De Kock","Babar","Tamim","Fakhar","Rashid","Curran",
+    "Rabada","Boult","Anderson","Zampa","Miller","Niroshan","Southee","Hasan"
+  ];
+  return names.map((n,i)=>({
+    id:'pl'+(i+1),
+    name:n,
+    role:(i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')),
+    bat:Math.round(40 + Math.random()*60),
+    bowl:Math.round(35 + Math.random()*65),
+    aggr:Math.round(30 + Math.random()*70),
+    basePrice:5000+Math.round(Math.random()*15000)
+  }));
+}
+
+document.getElementById('createBtn').onclick = ()=>{
+  const id = roomInput.value.trim();
+  const name = nameInput.value.trim();
+  const budget = Number(budgetInput.value) || 100000;
+  if(!id || !name){ info.innerText = 'Enter name & room ID.'; return; }
+  createRoom(id, name, budget);
+};
+
+document.getElementById('joinBtn').onclick = ()=>{
+  const id = roomInput.value.trim();
+  const name = nameInput.value.trim();
+  const budget = Number(budgetInput.value) || 100000;
+  if(!id || !name){ info.innerText = 'Enter name & room ID.'; return; }
+  joinRoom(id, name, budget);
+};
+
+document.getElementById('copyBtn').onclick = ()=>{
+  navigator.clipboard.writeText(createdRoomId.textContent);
+  info.innerText = '✅ Room ID copied!';
+};
+
+document.getElementById('startBtn').onclick = ()=>{
+  const id = createdRoomId.textContent;
+  const name = nameInput.value.trim();
+  window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p1`;
+};
+</script>
 </body>
 </html>
