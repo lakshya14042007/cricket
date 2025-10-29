@@ -25,7 +25,7 @@
   <div class="wrap">
     <div class="card">
       <h1>Bid Cricket — Create / Join Room</h1>
-      <div class="small">Simple: enter a Room ID, set same budget for both players, then open the room. Share Room ID to friend.</div>
+      <div class="small">Enter Room ID & your name. Both players will share same budget.</div>
 
       <label for="playerName">Your name</label>
       <input id="playerName" placeholder="e.g. Lakshya" />
@@ -33,7 +33,7 @@
       <label for="roomId">Room ID</label>
       <input id="roomId" placeholder="type or generate (e.g. room-1234)" />
 
-      <label for="startBudget">Starting budget (both players will use same)</label>
+      <label for="startBudget">Starting budget (same for both)</label>
       <input id="startBudget" type="number" value="100000" />
 
       <div class="row" style="margin-top:14px">
@@ -42,17 +42,15 @@
         <button id="genBtn" class="btn">Generate ID</button>
       </div>
 
-      <p id="info" class="muted" style="margin-top:12px">Enable Firebase Realtime DB & paste config in code if not done yet.</p>
+      <p id="info" class="muted" style="margin-top:12px">Enter info to begin.</p>
     </div>
   </div>
 
 <script type="module">
-/*
- index.html: creates/joins room then redirects to game.html
- Uses Firebase modular SDK (v12.x) Realtime Database
-*/
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-import { getDatabase, ref, get, set, update, onValue } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
+import { 
+  getDatabase, ref, get, set, update, onDisconnect 
+} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBDSVyEgkdh_gJuYjvLY2KenX3efMIfd34",
@@ -64,7 +62,6 @@ const firebaseConfig = {
   appId: "1:261417896823:web:ccfae5b573a2897558af72",
   measurementId: "G-ZLR9WM5YH9"
 };
-
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
@@ -88,16 +85,21 @@ async function createRoom(id, name, budget){
   }
   const initial = {
     createdAt: Date.now(),
-    status: 'waiting', // waiting -> bidding -> playing -> finished
+    status: 'waiting',
     budget: Number(budget),
     players: {
       p1: { name: name || 'Player1', budget: Number(budget), squad: [] }
     },
-    pool: null, // will set on first entrance (same pool for both)
+    pool: null,
     bidding: { index: 0, activeFor: null, roundOpen: false, bids: {} },
     game: null
   };
   await set(roomRef, initial);
+
+  // ✅ disconnect auto remove (for creator)
+  const playerRef = ref(db, `rooms/${id}/players/p1`);
+  onDisconnect(playerRef).remove();
+
   window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p1`;
 }
 
@@ -113,30 +115,43 @@ async function joinRoom(id, name, budget){
     info.innerText = 'Room is full (already has 2 players).';
     return;
   }
-  // join as p2; ensure budgets match (we enforce same shared starting budget)
-  await update(roomRef, { 'players/p2': { name: name||'Player2', budget: Number(budget), squad: [] }, status: 'bidding' });
-  // set pool if not present: we keep pool in room so both clients use same stats
+
+  await update(roomRef, { 
+    'players/p2': { name: name||'Player2', budget: Number(budget), squad: [] }, 
+    status: 'bidding' 
+  });
+
+  // ✅ disconnect auto remove (for joiner)
+  const playerRef = ref(db, `rooms/${id}/players/p2`);
+  onDisconnect(playerRef).remove();
+
+  // pool initialize if not exists
   if(!room.pool){
-    // create pool of 36 players with stats
     const pool = generatePool();
     await update(roomRef, { pool });
   }
+
   window.location.href = `game.html?room=${encodeURIComponent(id)}&me=p2`;
 }
 
 function generatePool(){
-  // deterministic-ish names + stats (36 players)
   const names = [
     "Virat","Rohit","Kohli","Bumrah","Jadeja","KL Rahul","Hardik","Shami","Iyer","Gill",
     "Pant","Shubman","Axar","Siraj","Rahul","Rahane","Vikram","Bishnoi","Yadav","Narine",
     "Stokes","Root","Smith","Williamson","De Kock","Babar","Tamim","Fakhar","Rashid","Curran",
-    "Rabada","Boult","Anderson","Zampa","Miller","Niroshan","Southee","Hasan"
-  ].slice(0,36);
+    "Rabada","Boult","Anderson","Zampa","Miller","Niroshan"
+  ];
   return names.map((n,i)=>{
-    const bat = Math.round(40 + Math.random()*60); // 40-100
-    const bowl = Math.round(35 + Math.random()*65); // 35-100
+    const bat = Math.round(40 + Math.random()*60);
+    const bowl = Math.round(35 + Math.random()*65);
     const aggr = Math.round(30 + Math.random()*70);
-    return { id: 'pl'+(i+1), name: n, role: (i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')), bat, bowl, aggr, basePrice: 5000 + Math.round(Math.random()*15000) };
+    return { 
+      id: 'pl'+(i+1), 
+      name: n, 
+      role: (i%5===0?'Bowler':(i%4===0?'Allrounder':'Batsman')), 
+      bat, bowl, aggr, 
+      basePrice: 5000 + Math.round(Math.random()*15000) 
+    };
   });
 }
 
